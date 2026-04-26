@@ -595,45 +595,118 @@ with tab4:
         flag_m=(model['T2']>model['T2_UCL'])|(model['Q']>model['Q_UCL'])
 
         # Indice variabili sempre visibile
-        with st.expander("📋 Indice variabili (riferimento per i grafici)",expanded=False):
-            st.dataframe(pd.DataFrame({'Indice':range(1,len(fn)+1),'Variabile':fn}),
-                         use_container_width=True,hide_index=True)
+        with st.expander("📋 Indice variabili (riferimento per i grafici)", expanded=False):
+            st.dataframe(
+                pd.DataFrame({'Indice': range(1, len(fn)+1), 'Variabile': fn}),
+                use_container_width=True, hide_index=True
+            )
 
-        # Coppie disponibili
-        pairs=[(i,i+1) for i in range(0,k_m-1,2)]
-        pair_labels=[f"PC{a+1} vs PC{b+1}  ({evr_m[a]:.1f}% + {evr_m[b]:.1f}%)"
-                     for a,b in pairs]
+        # Tutte le combinazioni possibili di coppie PC
+        from itertools import combinations
+        all_pairs = list(combinations(range(k_m), 2))
+        pair_labels = [
+            f"PC{a+1} vs PC{b+1}  ({evr_m[a]:.1f}% + {evr_m[b]:.1f}%)"
+            for a, b in all_pairs
+        ]
 
-        # Scelta grafico
         st.markdown("### Seleziona il grafico da visualizzare")
-        tipo=st.radio("Tipo",["Loading plot","Score plot"],
-                      horizontal=True,key='ls_tipo')
-        coppia_idx=st.selectbox("Coppia di PC",options=range(len(pairs)),
-                                format_func=lambda i: pair_labels[i],
-                                key='ls_coppia')
-        pc_i,pc_j=pairs[coppia_idx]
+        tipo = st.radio("Tipo di grafico", ["Loading plot", "Score plot"],
+                        horizontal=True, key='ls_tipo')
 
-        if tipo=="Loading plot":
-            st.plotly_chart(make_loading_pair_chart(P,fn,evr_m,pc_i,pc_j),
-                            use_container_width=True,key='load_chart')
-            # Tabella variabili per questa coppia
-            st.markdown("**Tabella variabili — posizione nel piano dei loadings:**")
-            df_load=pd.DataFrame({
-                'Indice': range(1,len(fn)+1),
-                'Variabile': fn,
-                f'Loading PC{pc_i+1}': P[:,pc_i].round(4),
-                f'Loading PC{pc_j+1}': P[:,pc_j].round(4),
-            })
-            # Ordina per distanza dall'origine
-            df_load['|loading|']=np.sqrt(P[:,pc_i]**2+P[:,pc_j]**2).round(4)
-            df_load=df_load.sort_values('|loading|',ascending=False)
-            st.dataframe(df_load,use_container_width=True,hide_index=True)
+        coppia_idx = st.selectbox(
+            "Coppia di PC",
+            options=range(len(all_pairs)),
+            format_func=lambda i: pair_labels[i],
+            key='ls_coppia'
+        )
+        pc_i, pc_j = all_pairs[coppia_idx]
+
+        if tipo == "Loading plot":
+            # Biplot: variabili come punti nello spazio PC_i vs PC_j
+            # con etichetta = nome variabile
+            p_count = P.shape[0]
+            labels  = fn if fn else [f'Var {i+1}' for i in range(p_count)]
+
+            fig_load = go.Figure()
+
+            # Cerchio unitario di riferimento
+            ang = np.linspace(0, 2*np.pi, 300)
+            fig_load.add_scatter(
+                x=np.cos(ang).tolist(), y=np.sin(ang).tolist(),
+                mode='lines', line=dict(color='#bdc3c7', width=0.8, dash='dot'),
+                name='Cerchio unitario', hoverinfo='skip', showlegend=False
+            )
+
+            # Frecce dall'origine + punti etichettati
+            for idx in range(p_count):
+                lx = float(P[idx, pc_i]); ly = float(P[idx, pc_j])
+                # freccia
+                fig_load.add_scatter(
+                    x=[0, lx], y=[0, ly], mode='lines',
+                    line=dict(color='#2980b9', width=1.2),
+                    showlegend=False, hoverinfo='skip'
+                )
+
+            # Tutti i punti con etichetta nome variabile
+            fig_load.add_scatter(
+                x=P[:, pc_i].tolist(), y=P[:, pc_j].tolist(),
+                mode='markers+text',
+                marker=dict(size=8, color='#2980b9',
+                            line=dict(color='white', width=1)),
+                text=labels,
+                textposition='top center',
+                textfont=dict(size=9, color='#1a1a2e'),
+                customdata=list(range(1, p_count+1)),
+                hovertemplate=(
+                    '<b>%{text}</b><br>'
+                    f'Loading PC{pc_i+1}: %{{x:.4f}}<br>'
+                    f'Loading PC{pc_j+1}: %{{y:.4f}}<extra></extra>'
+                ),
+                name='Variabili', showlegend=False
+            )
+
+            fig_load.add_hline(y=0, line_color='#bdc3c7', line_width=0.8)
+            fig_load.add_vline(x=0, line_color='#bdc3c7', line_width=0.8)
+            fig_load.update_layout(
+                title=dict(
+                    text=(f'Loading plot  PC{pc_i+1} ({evr_m[pc_i]:.1f}%)'
+                          f'  vs  PC{pc_j+1} ({evr_m[pc_j]:.1f}%)  —  '
+                          f'Variabili nello spazio delle componenti'),
+                    font=dict(family='IBM Plex Mono', size=12)
+                ),
+                xaxis_title=f'Loading PC{pc_i+1} ({evr_m[pc_i]:.1f}%)',
+                yaxis_title=f'Loading PC{pc_j+1} ({evr_m[pc_j]:.1f}%)',
+                height=520,
+                margin=dict(l=10, r=10, t=50, b=30),
+                plot_bgcolor='#fafafa', paper_bgcolor='white',
+                font=dict(family='IBM Plex Sans')
+            )
+            st.plotly_chart(fig_load, use_container_width=True, key='load_chart')
+
+            st.caption(
+                "💡 Variabili vicine tra loro sono correlate. "
+                "Variabili lontane dall'origine influenzano maggiormente queste PC. "
+                "Variabili opposte rispetto all'origine sono correlate negativamente."
+            )
+
+            # Tabella loadings ordinata per distanza dall'origine
+            st.markdown("**Tabella variabili — ordinate per influenza su questa coppia di PC:**")
+            df_load = pd.DataFrame({
+                'Indice':              range(1, p_count+1),
+                'Variabile':           labels,
+                f'Loading PC{pc_i+1}': P[:, pc_i].round(4),
+                f'Loading PC{pc_j+1}': P[:, pc_j].round(4),
+                'Distanza origine':    np.sqrt(P[:, pc_i]**2 + P[:, pc_j]**2).round(4),
+            }).sort_values('Distanza origine', ascending=False)
+            st.dataframe(df_load, use_container_width=True, hide_index=True)
 
         else:  # Score plot
-            st.plotly_chart(make_score_chart(T_m,lam_m,model['T2_UCL'],
-                                             evr_m,pc_i,pc_j,flag_m),
-                            use_container_width=True,key='score_chart')
-            n_flag=int(flag_m.sum())
+            st.plotly_chart(
+                make_score_chart(T_m, lam_m, model['T2_UCL'],
+                                 evr_m, pc_i, pc_j, flag_m),
+                use_container_width=True, key='score_chart'
+            )
+            n_flag = int(flag_m.sum())
             st.caption(f"Punti rossi: {n_flag} cicli anomali su {len(T_m)} totali")
 
 
@@ -644,162 +717,253 @@ with tab5:
     if st.session_state.model is None:
         st.info("⬆️ Costruisci prima il modello nella tab Calibrazione.")
     else:
-        model=st.session_state.model
-        fn=model['feature_names']
+        model = st.session_state.model
+        fn    = model['feature_names']
 
         st.markdown("### Carica nuovi dati dalla USB")
-        up_test=st.file_uploader("Trascina il file qui",
-                                  type=['csv','xlsx','xls'],key='up_test')
+        up_test = st.file_uploader("Trascina il file qui",
+                                   type=['csv','xlsx','xls'], key='up_test')
 
         if up_test:
-            df_tr=(pd.read_csv(up_test) if up_test.name.endswith('.csv')
-                   else pd.read_excel(up_test))
-            df_tr.columns=df_tr.columns.astype(str)
-            miss_c=[c for c in fn if c not in df_tr.columns]
+            df_tr = (pd.read_csv(up_test) if up_test.name.endswith('.csv')
+                     else pd.read_excel(up_test))
+            df_tr.columns = df_tr.columns.astype(str)
+            miss_c = [c for c in fn if c not in df_tr.columns]
             if miss_c:
                 st.error(f"Colonne mancanti nel file: {miss_c}")
             else:
-                df_test_X=df_tr[fn].copy().fillna(df_tr[fn].mean())
-                mon=monitor_new(model,df_test_X.values)
-                st.session_state.mon=mon
-                st.session_state.df_test_X=df_test_X
+                df_test_X = df_tr[fn].copy().fillna(df_tr[fn].mean())
+                mon = monitor_new(model, df_test_X.values)
+                st.session_state.mon       = mon
+                st.session_state.df_test_X = df_test_X
 
-                n_test=len(df_test_X)
-                n_t2=int(mon['T2_flag'].sum())
-                n_q =int(mon['Q_flag'].sum())
-                n_any=int((mon['T2_flag']|mon['Q_flag']).sum())
-                pct=n_any/n_test*100
+                n_test = len(df_test_X)
+                n_t2   = int(mon['T2_flag'].sum())
+                n_q    = int(mon['Q_flag'].sum())
+                n_any  = int((mon['T2_flag'] | mon['Q_flag']).sum())
+                pct    = n_any / n_test * 100
 
-                c1,c2,c3,c4=st.columns(4)
-                c1.metric("Cicli totali",n_test)
-                c2.metric("T² anomali",f"{n_t2} ({n_t2/n_test*100:.1f}%)")
-                c3.metric("Q anomali",f"{n_q} ({n_q/n_test*100:.1f}%)")
-                stato=("🟢 STABILE" if pct<5 else "🟡 ATTENZIONE" if pct<15 else "🔴 ANOMALIE")
-                c4.metric("Stato processo",stato)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Cicli totali", n_test)
+                c2.metric("T² anomali",  f"{n_t2} ({n_t2/n_test*100:.1f}%)")
+                c3.metric("Q anomali",   f"{n_q} ({n_q/n_test*100:.1f}%)")
+                stato = ("🟢 STABILE" if pct < 5
+                         else "🟡 ATTENZIONE" if pct < 15
+                         else "🔴 ANOMALIE")
+                c4.metric("Stato processo", stato)
 
-                # Control charts
+                # ── Control charts ────────────────────────────
                 st.markdown("### Control charts")
                 st.caption("I punti rossi sono cicli fuori controllo.")
-                st.plotly_chart(make_line_chart(mon['T2'],model['T2_UCL'],
-                                                'Phase II — Hotelling T²',
-                                                '#2980b9',mon['T2_flag']),
-                                use_container_width=True,key='p2_t2')
-                st.plotly_chart(make_line_chart(mon['Q'],model['Q_UCL'],
-                                                'Phase II — Q (SPE)',
-                                                '#27ae60',mon['Q_flag']),
-                                use_container_width=True,key='p2_q')
 
-                # Analisi anomalia
-                flagged_idx=np.where(mon['T2_flag']|mon['Q_flag'])[0]
+                # T² chart con on_select
+                fig_t2 = make_line_chart(mon['T2'], model['T2_UCL'],
+                                         'Phase II — Hotelling T²',
+                                         '#2980b9', mon['T2_flag'])
+                sel_t2 = st.plotly_chart(fig_t2, use_container_width=True,
+                                         key='p2_t2', on_select='rerun',
+                                         selection_mode='points')
 
-                if len(flagged_idx)==0:
-                    st.markdown("<div class='ok-box'>✅ Nessuna anomalia rilevata — processo in controllo.</div>",
-                                unsafe_allow_html=True)
+                fig_q = make_line_chart(mon['Q'], model['Q_UCL'],
+                                        'Phase II — Q (SPE)',
+                                        '#27ae60', mon['Q_flag'])
+                sel_q = st.plotly_chart(fig_q, use_container_width=True,
+                                        key='p2_q', on_select='rerun',
+                                        selection_mode='points')
+
+                # Leggi ciclo selezionato dal click sul grafico
+                clicked_cycle = None
+                if sel_t2 and sel_t2.selection and sel_t2.selection.get('points'):
+                    clicked_cycle = int(sel_t2.selection['points'][0]['x'])
+                elif sel_q and sel_q.selection and sel_q.selection.get('points'):
+                    clicked_cycle = int(sel_q.selection['points'][0]['x'])
+
+                # ── Tabella anomalie ──────────────────────────
+                flagged_idx = np.where(mon['T2_flag'] | mon['Q_flag'])[0]
+
+                if len(flagged_idx) == 0:
+                    st.markdown(
+                        "<div class='ok-box'>✅ Nessuna anomalia — processo in controllo.</div>",
+                        unsafe_allow_html=True
+                    )
                 else:
-                    st.markdown(f"### 🔍 Analisi anomalie")
-                    st.caption(f"{len(flagged_idx)} cicli fuori controllo. "
-                               "Seleziona un ciclo per vedere i contribution plots.")
+                    st.markdown(f"### 🔍 Cicli anomali — {len(flagged_idx)} fuori controllo")
+                    st.caption(
+                        "Clicca un punto sul grafico oppure seleziona un ciclo dalla tabella."
+                    )
 
-                    obs_choice=st.selectbox(
-                        "Seleziona ciclo da analizzare",
+                    # Tabella riassuntiva di tutti i cicli anomali
+                    df_anom = pd.DataFrame({
+                        'Ciclo':       flagged_idx,
+                        'T²':          mon['T2'][flagged_idx].round(3),
+                        'T²/UCL':      (mon['T2'][flagged_idx]/model['T2_UCL']).round(2),
+                        'Q':           mon['Q'][flagged_idx].round(3),
+                        'Q/UCL':       (mon['Q'][flagged_idx]/model['Q_UCL']).round(2),
+                        'T² flag':     mon['T2_flag'][flagged_idx],
+                        'Q flag':      mon['Q_flag'][flagged_idx],
+                        'Severità':    np.maximum(
+                            mon['T2'][flagged_idx]/model['T2_UCL'],
+                            mon['Q'][flagged_idx]/model['Q_UCL']
+                        ).round(2),
+                    }).sort_values('Severità', ascending=False).reset_index(drop=True)
+
+                    st.dataframe(df_anom, use_container_width=True, hide_index=True)
+
+                    # Determina ciclo da analizzare:
+                    # priorità al click sul grafico, altrimenti primo della tabella
+                    if clicked_cycle is not None and clicked_cycle in flagged_idx:
+                        default_idx = list(flagged_idx).index(clicked_cycle)
+                    else:
+                        default_idx = 0
+
+                    obs_choice = st.selectbox(
+                        "Ciclo selezionato per l'analisi",
                         options=flagged_idx.tolist(),
-                        format_func=lambda x:(
+                        index=default_idx,
+                        format_func=lambda x: (
                             f"Ciclo {x}  —  "
                             f"T²: {mon['T2'][x]:.2f} ({mon['T2'][x]/model['T2_UCL']:.1f}×UCL)  |  "
                             f"Q: {mon['Q'][x]:.2f} ({mon['Q'][x]/model['Q_UCL']:.1f}×UCL)"
-                        ),key='obs_sel'
+                        ),
+                        key='obs_sel'
                     )
 
-                    t2_obs=float(mon['T2'][obs_choice])
-                    q_obs =float(mon['Q'][obs_choice])
-                    ratio =max(t2_obs/model['T2_UCL'],q_obs/model['Q_UCL'])
-                    box_cls='alarm-box' if ratio>=1.5 else 'alarm-box'
-                    stato_obs="🔴 ANOMALIA" if ratio>=1.5 else "⚠️ ATTENZIONE"
+                    t2_obs = float(mon['T2'][obs_choice])
+                    q_obs  = float(mon['Q'][obs_choice])
+                    ratio  = max(t2_obs/model['T2_UCL'], q_obs/model['Q_UCL'])
 
                     st.markdown(
-                        f"<div class='{box_cls}'>"
-                        f"<strong>Ciclo {obs_choice} — {stato_obs}</strong><br>"
+                        f"<div class='alarm-box'>"
+                        f"<strong>Ciclo {obs_choice} — "
+                        f"{'🔴 ANOMALIA' if ratio>=1.5 else '⚠️ ATTENZIONE'}</strong><br>"
                         f"T² = {t2_obs:.3f} ({t2_obs/model['T2_UCL']:.2f}× UCL) &nbsp;|&nbsp; "
                         f"Q = {q_obs:.3f} ({q_obs/model['Q_UCL']:.2f}× UCL)"
                         f"</div>",
                         unsafe_allow_html=True
                     )
 
-                    # Contribution plots — si espandono sotto
+                    # ── Contribution plots ────────────────────
                     st.markdown("#### Contribution plots")
-                    with st.expander("Mostra contribution plots e analisi dettagliata",
-                                     expanded=True):
 
-                        # Indice variabili
-                        with st.expander("📋 Indice variabili"):
+                    c_t2v = (mon['Xn_s'][obs_choice] *
+                             (model['loadings'] @
+                              (mon['Tn'][obs_choice] / model['eigenvalues'])))
+                    c_qv  = mon['En'][obs_choice]
+                    top_t2 = np.argsort(np.abs(c_t2v))[::-1][:3].tolist()
+                    top_q  = np.argsort(np.abs(c_qv))[::-1][:3].tolist()
+
+                    # Indice variabili sopra i grafici
+                    with st.expander("📋 Indice variabili"):
+                        st.dataframe(
+                            pd.DataFrame({'Indice': range(1,len(fn)+1), 'Variabile': fn}),
+                            use_container_width=True, hide_index=True
+                        )
+
+                    col_l, col_r = st.columns(2)
+
+                    with col_l:
+                        st.markdown(f"**T² Contribution — Ciclo {obs_choice}**")
+                        fig_ct2, exc_t2 = make_contribution_chart(
+                            c_t2v, model['T2contrib_UCL'], model['T2contrib_LCL'],
+                            fn, f'T² Contribution — Ciclo {obs_choice}'
+                        )
+                        st.plotly_chart(fig_ct2, use_container_width=True,
+                                        key=f'ct2_{obs_choice}')
+
+                        # Tabella completa UCL/LCL per ogni variabile
+                        p_count = len(fn)
+                        df_ct2 = pd.DataFrame({
+                            'Idx':       range(1, p_count+1),
+                            'Variabile': fn,
+                            'Contributo': c_t2v.round(4),
+                            'LCL':        model['T2contrib_LCL'].round(4),
+                            'UCL':        model['T2contrib_UCL'].round(4),
+                            'Fuori':      ['🔴 SÌ' if (c_t2v[i]>model['T2contrib_UCL'][i]
+                                                        or c_t2v[i]<model['T2contrib_LCL'][i])
+                                           else '✅' for i in range(p_count)]
+                        })
+                        with st.expander("Tabella completa T² — UCL/LCL per variabile"):
+                            st.dataframe(df_ct2, use_container_width=True, hide_index=True)
+
+                        if exc_t2:
+                            st.markdown("**Variabili fuori limite:**")
                             st.dataframe(
-                                pd.DataFrame({'Indice':range(1,len(fn)+1),'Variabile':fn}),
-                                use_container_width=True,hide_index=True)
+                                pd.DataFrame(exc_t2, columns=['Idx','Variabile','Valore','LCL','UCL']),
+                                use_container_width=True, hide_index=True
+                            )
 
-                        c_t2v=(mon['Xn_s'][obs_choice]*
-                               (model['loadings']@(mon['Tn'][obs_choice]/model['eigenvalues'])))
-                        c_qv =mon['En'][obs_choice]
-                        top_t2=np.argsort(np.abs(c_t2v))[::-1][:3].tolist()
-                        top_q =np.argsort(np.abs(c_qv))[::-1][:3].tolist()
+                    with col_r:
+                        st.markdown(f"**Q Contribution — Ciclo {obs_choice}**")
+                        fig_cq, exc_q = make_contribution_chart(
+                            c_qv, model['Qcontrib_UCL'], model['Qcontrib_LCL'],
+                            fn, f'Q Contribution — Ciclo {obs_choice}'
+                        )
+                        st.plotly_chart(fig_cq, use_container_width=True,
+                                        key=f'cq_{obs_choice}')
 
-                        col_l,col_r=st.columns(2)
-                        with col_l:
-                            fig_ct2,exc_t2=make_contribution_chart(
-                                c_t2v,model['T2contrib_UCL'],model['T2contrib_LCL'],
-                                fn,f'T² Contribution — Ciclo {obs_choice}')
-                            st.plotly_chart(fig_ct2,use_container_width=True,
-                                            key=f'ct2_{obs_choice}')
-                            if exc_t2:
-                                st.markdown("**Variabili fuori limite — T²:**")
-                                st.dataframe(
-                                    pd.DataFrame(exc_t2,
-                                                 columns=['Idx','Variabile','Valore','LCL','UCL']),
-                                    use_container_width=True,hide_index=True)
+                        df_cq = pd.DataFrame({
+                            'Idx':       range(1, p_count+1),
+                            'Variabile': fn,
+                            'Contributo': c_qv.round(4),
+                            'LCL':        model['Qcontrib_LCL'].round(4),
+                            'UCL':        model['Qcontrib_UCL'].round(4),
+                            'Fuori':      ['🔴 SÌ' if (c_qv[i]>model['Qcontrib_UCL'][i]
+                                                        or c_qv[i]<model['Qcontrib_LCL'][i])
+                                           else '✅' for i in range(p_count)]
+                        })
+                        with st.expander("Tabella completa Q — UCL/LCL per variabile"):
+                            st.dataframe(df_cq, use_container_width=True, hide_index=True)
 
-                        with col_r:
-                            fig_cq,exc_q=make_contribution_chart(
-                                c_qv,model['Qcontrib_UCL'],model['Qcontrib_LCL'],
-                                fn,f'Q Contribution — Ciclo {obs_choice}')
-                            st.plotly_chart(fig_cq,use_container_width=True,
-                                            key=f'cq_{obs_choice}')
-                            if exc_q:
-                                st.markdown("**Variabili fuori limite — Q:**")
-                                st.dataframe(
-                                    pd.DataFrame(exc_q,
-                                                 columns=['Idx','Variabile','Valore','LCL','UCL']),
-                                    use_container_width=True,hide_index=True)
+                        if exc_q:
+                            st.markdown("**Variabili fuori limite:**")
+                            st.dataframe(
+                                pd.DataFrame(exc_q, columns=['Idx','Variabile','Valore','LCL','UCL']),
+                                use_container_width=True, hide_index=True
+                            )
 
-                        # LLM
-                        st.markdown("#### 🤖 Spiegazione per il tecnico")
-                        if st.button("Genera spiegazione con AI",key=f'llm_an_{obs_choice}'):
-                            with st.spinner("Analisi in corso..."):
-                                txt_an,err_an=llm_anomaly(t2_obs,q_obs,
-                                                          model['T2_UCL'],model['Q_UCL'],
-                                                          top_t2,top_q,fn)
-                            if err_an: st.error(f"Errore: {err_an}")
-                            else:
-                                st.markdown(
-                                    f"<div class='llm-box'>{txt_an.replace(chr(10),'<br>')}</div>",
-                                    unsafe_allow_html=True)
+                    # ── LLM spiegazione ───────────────────────
+                    st.markdown("#### 🤖 Spiegazione per il tecnico")
+                    if st.button("Genera spiegazione con AI",
+                                 key=f'llm_an_{obs_choice}'):
+                        with st.spinner("Analisi in corso..."):
+                            txt_an, err_an = llm_anomaly(
+                                t2_obs, q_obs,
+                                model['T2_UCL'], model['Q_UCL'],
+                                top_t2, top_q, fn
+                            )
+                        if err_an:
+                            st.error(f"Errore: {err_an}")
+                        else:
+                            st.markdown(
+                                f"<div class='llm-box'>"
+                                f"{txt_an.replace(chr(10),'<br>')}"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
 
-                        # Log
-                        st.markdown("#### 📝 Registra intervento")
-                        with st.form(f"log_{obs_choice}"):
-                            azione=st.text_area("Descrivi l'azione correttiva",height=70,
-                                               placeholder="Es: aumentata contropressione da 80 a 95 bar")
-                            if st.form_submit_button("💾 Salva nel log",use_container_width=True):
-                                if azione:
-                                    st.session_state.anomaly_log.append({
-                                        'Ciclo':obs_choice,
-                                        'T²':round(t2_obs,3),
-                                        'Q':round(q_obs,3),
-                                        'Severità':f"{ratio:.2f}×UCL",
-                                        'Intervento':azione
-                                    })
-                                    st.success("✅ Salvato.")
+                    # ── Log intervento ────────────────────────
+                    st.markdown("#### 📝 Registra intervento")
+                    with st.form(f"log_{obs_choice}"):
+                        azione = st.text_area(
+                            "Descrivi l'azione correttiva", height=70,
+                            placeholder="Es: aumentata contropressione da 80 a 95 bar"
+                        )
+                        if st.form_submit_button("💾 Salva nel log",
+                                                 use_container_width=True):
+                            if azione:
+                                st.session_state.anomaly_log.append({
+                                    'Ciclo':      obs_choice,
+                                    'T²':         round(t2_obs, 3),
+                                    'Q':          round(q_obs, 3),
+                                    'Severità':   f"{ratio:.2f}×UCL",
+                                    'Intervento': azione
+                                })
+                                st.success("✅ Salvato.")
 
                     # Log completo
                     if st.session_state.anomaly_log:
                         st.markdown("#### 📋 Log interventi")
-                        st.dataframe(pd.DataFrame(st.session_state.anomaly_log),
-                                     use_container_width=True)
+                        st.dataframe(
+                            pd.DataFrame(st.session_state.anomaly_log),
+                            use_container_width=True
+                        )
