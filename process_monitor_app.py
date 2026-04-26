@@ -567,10 +567,10 @@ with tab1:
             flagged_arr = fT2 | fQ
             st.plotly_chart(chart_line(model['T2'], model['T2_UCL'],
                                        'Phase I — Hotelling T²', '#2c3e50', fT2),
-                            use_container_width=True)
+                            use_container_width=True, key='p1_t2_chart')
             st.plotly_chart(chart_line(model['Q'], model['Q_UCL'],
                                        'Phase I — Q (SPE)', '#16a085', fQ),
-                            use_container_width=True)
+                            use_container_width=True, key='p1_q_chart')
 
             # Score plots per ogni coppia di PC
             st.markdown("#### Score plots — coppie di PC")
@@ -583,7 +583,8 @@ with tab1:
                 st.plotly_chart(
                     chart_scores(T_m, lam_m, model['T2_UCL'],
                                  evr_m, pc_i, pc_j, flagged_arr),
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f'score_tab1_{pc_i}_{pc_j}'
                 )
 
 
@@ -638,11 +639,11 @@ with tab2:
                 st.plotly_chart(chart_line(mon['T2'], model['T2_UCL'],
                                            'Phase II — Hotelling T²',
                                            '#2980b9', mon['T2_flag']),
-                                use_container_width=True)
+                                use_container_width=True, key='p2_t2_chart')
                 st.plotly_chart(chart_line(mon['Q'], model['Q_UCL'],
                                            'Phase II — Q (SPE)',
                                            '#27ae60', mon['Q_flag']),
-                                use_container_width=True)
+                                use_container_width=True, key='p2_q_chart')
 
                 flagged_idx = np.where(mon['T2_flag'] | mon['Q_flag'])[0]
 
@@ -699,7 +700,8 @@ with tab2:
                             c_t2, model['T2contrib_UCL'], model['T2contrib_LCL'],
                             fn, f'T² Contribution — Ciclo {obs_choice}'
                         )
-                        st.plotly_chart(fig_ct2, use_container_width=True)
+                        st.plotly_chart(fig_ct2, use_container_width=True,
+                                        key=f'contrib_t2_{obs_choice}')
                         if exceed_t2:
                             st.markdown("**Variabili fuori limite (T²):**")
                             st.dataframe(
@@ -713,7 +715,8 @@ with tab2:
                             c_q, model['Qcontrib_UCL'], model['Qcontrib_LCL'],
                             fn, f'Q Contribution — Ciclo {obs_choice}'
                         )
-                        st.plotly_chart(fig_cq, use_container_width=True)
+                        st.plotly_chart(fig_cq, use_container_width=True,
+                                        key=f'contrib_q_{obs_choice}')
                         if exceed_q:
                             st.markdown("**Variabili fuori limite (Q):**")
                             st.dataframe(
@@ -790,7 +793,7 @@ with tab3:
             format_func=lambda i: f"PC{i+1} — {evr_m[i]:.2f}% varianza"
         )
         st.plotly_chart(chart_loadings(P, fn, pc_sel, evr_m),
-                        use_container_width=True)
+                        use_container_width=True, key=f'loading_pc{pc_sel}')
 
         # Top 5 per questa PC
         top5 = np.argsort(np.abs(P[:, pc_sel]))[::-1][:5]
@@ -816,5 +819,6 @@ with tab3:
             st.plotly_chart(
                 chart_scores(T_m, lam_m, model['T2_UCL'],
                              evr_m, pc_i, pc_j, flagged_tr),
-                use_container_width=True
+                use_container_width=True,
+                key=f'score_tab3_{pc_i}_{pc_j}'
             )
