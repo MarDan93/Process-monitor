@@ -892,7 +892,7 @@ Spiega in italiano a un capoturno cosa sta succedendo al processo e se c'è moti
                 obs_choice=None
                 if sel and sel.selection and sel.selection.get('rows'):
                     row_idx=sel.selection['rows'][0]
-                obs_choice=int(df_anom.iloc[row_idx]['Ciclo'])
+                    obs_choice=int(df_anom.iloc[row_idx]['Ciclo'])
                 elif len(flagged_idx)>0:
                     obs_choice=int(df_anom.iloc[0]['Ciclo'])
 
