@@ -42,7 +42,7 @@ def call_gemini(prompt, temperature=0.3):
         model = genai.GenerativeModel(
             "gemini-2.5-flash",
             generation_config=genai.GenerationConfig(
-                temperature=temperature, max_output_tokens=600
+                temperature=temperature, max_output_tokens=1500
             )
         )
         response = model.generate_content(prompt)
@@ -535,6 +535,151 @@ with tab3:
             st.plotly_chart(make_line_chart(model['Q'],model['Q_UCL'],
                                             'Phase I — Q (SPE)','#16a085',fQ),
                             use_container_width=True,key='p1_q')
+
+            # ── Contribution plots Phase I ─────────────────────
+            flagged_p1 = np.where(fT2 | fQ)[0]
+            if len(flagged_p1) > 0:
+                st.markdown("#### Contribution plots — cicli anomali Phase I")
+                st.caption(
+                    f"{len(flagged_p1)} cicli fuori controllo nel train set. "
+                    "Analizzali per capire se il dataset di calibrazione era davvero stabile."
+                )
+
+                with st.expander("📋 Indice variabili", expanded=False):
+                    st.dataframe(
+                        pd.DataFrame({'Indice': range(1, len(x_cols)+1),
+                                      'Variabile': x_cols}),
+                        use_container_width=True, hide_index=True
+                    )
+
+                # Tabella flag Phase I ordinata per severità
+                p_count = len(x_cols)
+                df_flag_p1 = pd.DataFrame({
+                    'Ciclo':       flagged_p1,
+                    'T²':          model['T2'][flagged_p1].round(3),
+                    'T²/UCL':      (model['T2'][flagged_p1]/model['T2_UCL']).round(2),
+                    'Q':           model['Q'][flagged_p1].round(3),
+                    'Q/UCL':       (model['Q'][flagged_p1]/model['Q_UCL']).round(2),
+                    'Severità×UCL': np.maximum(
+                        model['T2'][flagged_p1]/model['T2_UCL'],
+                        model['Q'][flagged_p1]/model['Q_UCL']
+                    ).round(2),
+                }).sort_values('Severità×UCL', ascending=False).reset_index(drop=True)
+
+                sel_p1 = st.dataframe(
+                    df_flag_p1, use_container_width=True, hide_index=True,
+                    on_select='rerun', selection_mode='single-row',
+                    key='p1_flag_table'
+                )
+
+                # Determina ciclo selezionato
+                obs_p1 = None
+                if sel_p1 and sel_p1.selection and sel_p1.selection.get('rows'):
+                    obs_p1 = int(df_flag_p1.iloc[sel_p1.selection['rows'][0]]['Ciclo'])
+                else:
+                    obs_p1 = int(df_flag_p1.iloc[0]['Ciclo'])
+
+                t2_p1 = float(model['T2'][obs_p1])
+                q_p1  = float(model['Q'][obs_p1])
+
+                st.markdown(
+                    f"<div class='alarm-box'>"
+                    f"<strong>Ciclo {obs_p1} (Phase I)</strong><br>"
+                    f"T² = {t2_p1:.3f} ({t2_p1/model['T2_UCL']:.2f}× UCL) &nbsp;|&nbsp; "
+                    f"Q = {q_p1:.3f} ({q_p1/model['Q_UCL']:.2f}× UCL)"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+                # Calcola contributions sul train scalato
+                Xs_p1  = model['X_scaled']
+                E_p1   = model['E']
+                T_p1   = model['scores']
+                lam_p1 = model['eigenvalues']
+                P_p1   = model['loadings']
+
+                c_t2_p1 = Xs_p1[obs_p1] * (P_p1 @ (T_p1[obs_p1] / lam_p1))
+                c_q_p1  = E_p1[obs_p1]
+
+                top_t2_p1 = np.argsort(np.abs(c_t2_p1))[::-1][:3].tolist()
+                top_q_p1  = np.argsort(np.abs(c_q_p1))[::-1][:3].tolist()
+
+                col_l, col_r = st.columns(2)
+                with col_l:
+                    st.markdown(f"**T² Contribution — Ciclo {obs_p1}**")
+                    fig_ct2_p1, exc_t2_p1 = make_contribution_chart(
+                        c_t2_p1, model['T2contrib_UCL'], model['T2contrib_LCL'],
+                        x_cols, f'T² Contribution — Ciclo {obs_p1} (Phase I)'
+                    )
+                    st.plotly_chart(fig_ct2_p1, use_container_width=True,
+                                    key=f'p1_ct2_{obs_p1}')
+                    df_ct2_p1 = pd.DataFrame({
+                        'Idx':       range(1, p_count+1),
+                        'Variabile': x_cols,
+                        'Contributo': c_t2_p1.round(4),
+                        'LCL':       model['T2contrib_LCL'].round(4),
+                        'UCL':       model['T2contrib_UCL'].round(4),
+                        'Fuori':     ['🔴' if (c_t2_p1[i]>model['T2contrib_UCL'][i]
+                                              or c_t2_p1[i]<model['T2contrib_LCL'][i])
+                                      else '✅' for i in range(p_count)]
+                    })
+                    with st.expander("Tabella completa T²"):
+                        st.dataframe(df_ct2_p1, use_container_width=True, hide_index=True)
+                    if exc_t2_p1:
+                        st.markdown("**Fuori limite T²:**")
+                        st.dataframe(
+                            pd.DataFrame(exc_t2_p1,
+                                         columns=['Idx','Variabile','Valore','LCL','UCL']),
+                            use_container_width=True, hide_index=True
+                        )
+
+                with col_r:
+                    st.markdown(f"**Q Contribution — Ciclo {obs_p1}**")
+                    fig_cq_p1, exc_q_p1 = make_contribution_chart(
+                        c_q_p1, model['Qcontrib_UCL'], model['Qcontrib_LCL'],
+                        x_cols, f'Q Contribution — Ciclo {obs_p1} (Phase I)'
+                    )
+                    st.plotly_chart(fig_cq_p1, use_container_width=True,
+                                    key=f'p1_cq_{obs_p1}')
+                    df_cq_p1 = pd.DataFrame({
+                        'Idx':       range(1, p_count+1),
+                        'Variabile': x_cols,
+                        'Contributo': c_q_p1.round(4),
+                        'LCL':       model['Qcontrib_LCL'].round(4),
+                        'UCL':       model['Qcontrib_UCL'].round(4),
+                        'Fuori':     ['🔴' if (c_q_p1[i]>model['Qcontrib_UCL'][i]
+                                              or c_q_p1[i]<model['Qcontrib_LCL'][i])
+                                      else '✅' for i in range(p_count)]
+                    })
+                    with st.expander("Tabella completa Q"):
+                        st.dataframe(df_cq_p1, use_container_width=True, hide_index=True)
+                    if exc_q_p1:
+                        st.markdown("**Fuori limite Q:**")
+                        st.dataframe(
+                            pd.DataFrame(exc_q_p1,
+                                         columns=['Idx','Variabile','Valore','LCL','UCL']),
+                            use_container_width=True, hide_index=True
+                        )
+
+                # AI — interpretazione flag Phase I
+                st.markdown("---")
+                v_t2_p1 = [x_cols[i] for i in top_t2_p1]
+                v_q_p1  = [x_cols[i] for i in top_q_p1]
+                prompt_p1 = f"""Sei un esperto di stampaggio a iniezione e SPC multivariato.
+Modello PCA-SPC Phase I: {len(model['T2'])} cicli, k={model['k']} PC.
+Ciclo anomalo nel training set: {obs_p1}.
+T²={t2_p1:.3f} ({t2_p1/model['T2_UCL']:.2f}×UCL), Q={q_p1:.3f} ({q_p1/model['Q_UCL']:.2f}×UCL).
+Variabili che contribuiscono al T²: {', '.join(v_t2_p1)}.
+Variabili che contribuiscono al Q: {', '.join(v_q_p1)}.
+Spiega in italiano a un process engineer:
+1. Cosa significa trovare questo ciclo anomalo nel dataset di calibrazione
+2. Se è necessario rimuoverlo o se si può tenere
+3. Cosa suggerisce sulle condizioni del processo durante la raccolta dati
+Max 150 parole."""
+                llm_button("Interpreta ciclo anomalo Phase I", prompt_p1,
+                           key=f'ai_p1_{obs_p1}')
+            else:
+                st.success("✅ Nessun ciclo fuori controllo nel train set — calibrazione pulita.")
 
         elif st.session_state.model is not None:
             model=st.session_state.model
