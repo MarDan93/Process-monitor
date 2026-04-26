@@ -622,46 +622,27 @@ with tab4:
         pc_i, pc_j = all_pairs[coppia_idx]
 
         if tipo == "Loading plot":
-            # Biplot: variabili come punti nello spazio PC_i vs PC_j
-            # con etichetta = nome variabile
             p_count = P.shape[0]
             labels  = fn if fn else [f'Var {i+1}' for i in range(p_count)]
 
             fig_load = go.Figure()
 
-            # Cerchio unitario di riferimento
-            ang = np.linspace(0, 2*np.pi, 300)
+            # Solo punti con numero indice come etichetta
             fig_load.add_scatter(
-                x=np.cos(ang).tolist(), y=np.sin(ang).tolist(),
-                mode='lines', line=dict(color='#bdc3c7', width=0.8, dash='dot'),
-                name='Cerchio unitario', hoverinfo='skip', showlegend=False
-            )
-
-            # Frecce dall'origine + punti etichettati
-            for idx in range(p_count):
-                lx = float(P[idx, pc_i]); ly = float(P[idx, pc_j])
-                # freccia
-                fig_load.add_scatter(
-                    x=[0, lx], y=[0, ly], mode='lines',
-                    line=dict(color='#2980b9', width=1.2),
-                    showlegend=False, hoverinfo='skip'
-                )
-
-            # Tutti i punti con etichetta nome variabile
-            fig_load.add_scatter(
-                x=P[:, pc_i].tolist(), y=P[:, pc_j].tolist(),
+                x=P[:, pc_i].tolist(),
+                y=P[:, pc_j].tolist(),
                 mode='markers+text',
-                marker=dict(size=8, color='#2980b9',
+                marker=dict(size=9, color='#2980b9',
                             line=dict(color='white', width=1)),
-                text=labels,
+                text=[str(i+1) for i in range(p_count)],
                 textposition='top center',
                 textfont=dict(size=9, color='#1a1a2e'),
-                customdata=list(range(1, p_count+1)),
                 hovertemplate=(
-                    '<b>%{text}</b><br>'
-                    f'Loading PC{pc_i+1}: %{{x:.4f}}<br>'
-                    f'Loading PC{pc_j+1}: %{{y:.4f}}<extra></extra>'
+                    '<b>%{customdata}</b><br>'
+                    f'PC{pc_i+1}: %{{x:.4f}}<br>'
+                    f'PC{pc_j+1}: %{{y:.4f}}<extra></extra>'
                 ),
+                customdata=labels,
                 name='Variabili', showlegend=False
             )
 
@@ -670,13 +651,12 @@ with tab4:
             fig_load.update_layout(
                 title=dict(
                     text=(f'Loading plot  PC{pc_i+1} ({evr_m[pc_i]:.1f}%)'
-                          f'  vs  PC{pc_j+1} ({evr_m[pc_j]:.1f}%)  —  '
-                          f'Variabili nello spazio delle componenti'),
+                          f'  vs  PC{pc_j+1} ({evr_m[pc_j]:.1f}%)'),
                     font=dict(family='IBM Plex Mono', size=12)
                 ),
-                xaxis_title=f'Loading PC{pc_i+1} ({evr_m[pc_i]:.1f}%)',
-                yaxis_title=f'Loading PC{pc_j+1} ({evr_m[pc_j]:.1f}%)',
-                height=520,
+                xaxis_title=f'PC{pc_i+1} — loading ({evr_m[pc_i]:.1f}% var)',
+                yaxis_title=f'PC{pc_j+1} — loading ({evr_m[pc_j]:.1f}% var)',
+                height=500,
                 margin=dict(l=10, r=10, t=50, b=30),
                 plot_bgcolor='#fafafa', paper_bgcolor='white',
                 font=dict(family='IBM Plex Sans')
@@ -684,9 +664,9 @@ with tab4:
             st.plotly_chart(fig_load, use_container_width=True, key='load_chart')
 
             st.caption(
-                "💡 Variabili vicine tra loro sono correlate. "
-                "Variabili lontane dall'origine influenzano maggiormente queste PC. "
-                "Variabili opposte rispetto all'origine sono correlate negativamente."
+                "💡 Il numero sul punto corrisponde all'indice variabile nella tabella sotto. "
+                "Hover sul punto per vedere il nome completo. "
+                "Variabili vicine = correlate | Variabili opposte = correlate negativamente."
             )
 
             # Tabella loadings ordinata per distanza dall'origine
@@ -754,29 +734,42 @@ with tab5:
 
                 # ── Control charts ────────────────────────────
                 st.markdown("### Control charts")
-                st.caption("I punti rossi sono cicli fuori controllo.")
+                st.caption(
+                    "Clicca un punto anomalo (rosso) sul grafico per analizzarlo, "
+                    "oppure selezionalo dalla tabella sottostante."
+                )
 
-                # T² chart con on_select
+                # T² chart
                 fig_t2 = make_line_chart(mon['T2'], model['T2_UCL'],
                                          'Phase II — Hotelling T²',
                                          '#2980b9', mon['T2_flag'])
-                sel_t2 = st.plotly_chart(fig_t2, use_container_width=True,
-                                         key='p2_t2', on_select='rerun',
-                                         selection_mode='points')
+                ev_t2 = st.plotly_chart(fig_t2, use_container_width=True,
+                                        key='p2_t2', on_select='rerun',
+                                        selection_mode='points')
 
+                # Q chart
                 fig_q = make_line_chart(mon['Q'], model['Q_UCL'],
                                         'Phase II — Q (SPE)',
                                         '#27ae60', mon['Q_flag'])
-                sel_q = st.plotly_chart(fig_q, use_container_width=True,
-                                        key='p2_q', on_select='rerun',
-                                        selection_mode='points')
+                ev_q = st.plotly_chart(fig_q, use_container_width=True,
+                                       key='p2_q', on_select='rerun',
+                                       selection_mode='points')
 
-                # Leggi ciclo selezionato dal click sul grafico
+                # Leggi ciclo cliccato — cerca in entrambi i grafici
                 clicked_cycle = None
-                if sel_t2 and sel_t2.selection and sel_t2.selection.get('points'):
-                    clicked_cycle = int(sel_t2.selection['points'][0]['x'])
-                elif sel_q and sel_q.selection and sel_q.selection.get('points'):
-                    clicked_cycle = int(sel_q.selection['points'][0]['x'])
+                try:
+                    pts_t2 = (ev_t2.selection.points
+                              if ev_t2 and hasattr(ev_t2, 'selection')
+                              and ev_t2.selection else [])
+                    pts_q  = (ev_q.selection.points
+                              if ev_q  and hasattr(ev_q,  'selection')
+                              and ev_q.selection  else [])
+                    if pts_t2:
+                        clicked_cycle = int(pts_t2[0]['x'])
+                    elif pts_q:
+                        clicked_cycle = int(pts_q[0]['x'])
+                except Exception:
+                    clicked_cycle = None
 
                 # ── Tabella anomalie ──────────────────────────
                 flagged_idx = np.where(mon['T2_flag'] | mon['Q_flag'])[0]
