@@ -5,3 +5,4 @@ scipy
 pandas
 openpyxl
 numpy
+xlrd
