@@ -332,9 +332,11 @@ with tab1:
         st.markdown("#### 🤖 Analisi AI del dataset")
         desc_str=df_X.fillna(df_X.mean()).describe().round(3).to_string()
         miss_str=df_X.isnull().sum().to_string()
-        corr=df_X.corr().abs(); np.fill_diagonal(corr.values,0)
+        corr=df_X.corr().abs()
+        corr_np=corr.values.copy(); np.fill_diagonal(corr_np,0)
+        corr_filled=pd.DataFrame(corr_np,index=corr.index,columns=corr.columns)
         top_corr="\n".join(f"  {a}↔{b}: {v:.2f}"
-                           for (a,b),v in corr.unstack().nlargest(5).items())
+                           for (a,b),v in corr_filled.unstack().nlargest(5).items())
         prompt_ds=f"""Sei un esperto di stampaggio a iniezione e analisi dati industriali.
 Dataset: {len(df_X)} cicli, {len(x_cols)} variabili X, {len(y_valid)} variabili Y ({', '.join(y_valid) if y_valid else 'nessuna'}).
 Statistiche:\n{desc_str}\nValori mancanti:\n{miss_str}\nTop correlazioni:\n{top_corr}
