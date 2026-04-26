@@ -40,7 +40,7 @@ def call_gemini(prompt, temperature=0.3):
             return None, "GEMINI_API_KEY non configurata nei Secrets di Streamlit."
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(
-            "gemini-1.5-flash",
+            "gemini-2.5-flash",
             generation_config=genai.GenerationConfig(
                 temperature=temperature, max_output_tokens=600
             )
