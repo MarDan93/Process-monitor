@@ -17,48 +17,50 @@ st.markdown("""
 html,body,[class*="css"]{font-family:'IBM Plex Sans',sans-serif;}
 h1,h2,h3{font-family:'IBM Plex Mono',monospace;}
 .llm-box{
-  background:#1e3a5f;
-  border:2px solid #4a90d9;
-  border-left:6px solid #4a90d9;
-  padding:16px 20px;
-  border-radius:6px;
-  font-size:15px;
-  line-height:1.8;
-  margin-top:12px;
-  color:#ffffff !important;
-  font-weight:400;
-}
-.llm-box br{display:block; margin:4px 0;}
+  background:#1e3a5f;border:2px solid #4a90d9;border-left:6px solid #4a90d9;
+  padding:14px 18px;border-radius:6px;font-size:14px;line-height:1.7;
+  margin-top:10px;color:#ffffff !important;}
 .alarm-box{
-  background:#5c1a1a;
-  border:2px solid #e74c3c;
-  border-left:6px solid #e74c3c;
-  padding:14px 18px;
-  border-radius:6px;
-  font-size:15px;
-  margin-top:8px;
-  color:#ffffff !important;
-}
+  background:#5c1a1a;border:2px solid #e74c3c;border-left:6px solid #e74c3c;
+  padding:12px 16px;border-radius:6px;font-size:14px;margin-top:8px;color:#ffffff !important;}
 .alarm-box strong{color:#ff9999;}
 .ok-box{
-  background:#1a3d2b;
-  border:2px solid #2ecc71;
-  border-left:6px solid #2ecc71;
-  padding:14px 18px;
-  border-radius:6px;
-  font-size:15px;
-  margin-top:8px;
-  color:#ffffff !important;
-}
+  background:#1a3d2b;border:2px solid #2ecc71;border-left:6px solid #2ecc71;
+  padding:12px 16px;border-radius:6px;font-size:14px;margin-top:8px;color:#ffffff !important;}
+.ctx-box{
+  background:#2a1f4f;border:2px solid #8b5cf6;border-left:6px solid #8b5cf6;
+  padding:12px 16px;border-radius:6px;font-size:13px;margin-top:8px;color:#e2d9ff !important;}
+.chat-user{
+  background:#1e3a5f;border-radius:8px 8px 0 8px;padding:10px 14px;
+  margin:6px 0;font-size:13px;color:#fff;text-align:right;}
+.chat-ai{
+  background:#1a3d2b;border-radius:8px 8px 8px 0;padding:10px 14px;
+  margin:6px 0;font-size:13px;color:#fff;}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════
-#  GEMINI
+#  PROCESS CONTEXT HELPER
 # ═══════════════════════════════════════════════
 
-def call_gemini(prompt):
+def get_process_context():
+    """Returns the process context block to inject into every prompt."""
+    ctx = st.session_state.get('process_context', '').strip()
+    if not ctx:
+        return ""
+    return f"""
+=== PROCESS CONTEXT (provided by the user — use this to contextualise every answer) ===
+{ctx}
+=== END CONTEXT ===
+"""
+
+
+# ═══════════════════════════════════════════════
+#  GEMINI CORE
+# ═══════════════════════════════════════════════
+
+def call_gemini(prompt, max_tokens=1500):
     try:
         key = st.secrets.get("GEMINI_API_KEY", "")
         if not key:
@@ -66,17 +68,20 @@ def call_gemini(prompt):
         genai.configure(api_key=key)
         m = genai.GenerativeModel(
             "gemini-2.5-flash",
-            generation_config=genai.GenerationConfig(temperature=0.3, max_output_tokens=8000)
+            generation_config=genai.GenerationConfig(
+                temperature=0.3, max_output_tokens=max_tokens)
         )
         return m.generate_content(prompt).text, None
     except Exception as e:
         return None, str(e)
 
 
-def llm_button(label, prompt, key):
+def llm_button(label, prompt, key, max_tokens=800):
+    """One-shot AI button — renders result inline."""
     if st.button(f"🤖 {label}", key=key):
+        full_prompt = get_process_context() + "\n" + prompt
         with st.spinner("AI analysis..."):
-            txt, err = call_gemini(prompt)
+            txt, err = call_gemini(full_prompt, max_tokens)
         if err:
             st.error(f"Gemini error: {err}")
         else:
@@ -84,6 +89,52 @@ def llm_button(label, prompt, key):
                 f"<div class='llm-box'>{txt.replace(chr(10),'<br>')}</div>",
                 unsafe_allow_html=True)
     st.caption("Powered by Google Gemini 2.5 Flash")
+
+
+def open_chat(section_context, chat_key):
+    """Open chat widget — user can ask free questions in context."""
+    hist_key = f"chat_hist_{chat_key}"
+    if hist_key not in st.session_state:
+        st.session_state[hist_key] = []
+
+    with st.expander("💬 Ask AI about this section", expanded=False):
+        # Show history
+        for msg in st.session_state[hist_key]:
+            if msg['role'] == 'user':
+                st.markdown(f"<div class='chat-user'>🧑 {msg['text']}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='chat-ai'>🤖 {msg['text']}</div>",
+                            unsafe_allow_html=True)
+
+        user_input = st.text_input("Your question", key=f"chat_input_{chat_key}",
+                                   placeholder="e.g. Why is PC2 so important here?")
+        col_send, col_clear = st.columns([3, 1])
+        with col_send:
+            if st.button("Send", key=f"chat_send_{chat_key}") and user_input.strip():
+                # Build full prompt with context + section data + history
+                history_str = "\n".join(
+                    f"{'User' if m['role']=='user' else 'Assistant'}: {m['text']}"
+                    for m in st.session_state[hist_key][-6:]  # last 3 exchanges
+                )
+                full_prompt = (
+                    get_process_context() + "\n"
+                    + f"=== CURRENT SECTION DATA ===\n{section_context}\n"
+                    + (f"=== CONVERSATION HISTORY ===\n{history_str}\n" if history_str else "")
+                    + f"User question: {user_input}\n"
+                    + "Answer concisely and practically. If you need more info, ask."
+                )
+                with st.spinner("Thinking..."):
+                    reply, err = call_gemini(full_prompt, max_tokens=600)
+                if err:
+                    reply = f"Error: {err}"
+                st.session_state[hist_key].append({'role': 'user', 'text': user_input})
+                st.session_state[hist_key].append({'role': 'ai', 'text': reply})
+                st.rerun()
+        with col_clear:
+            if st.button("Clear", key=f"chat_clear_{chat_key}"):
+                st.session_state[hist_key] = []
+                st.rerun()
 
 
 # ═══════════════════════════════════════════════
@@ -155,7 +206,7 @@ def iterative_cleaning(X_raw, k_clean, alpha_clean, max_iter=10):
         res=fit_pca_spc(X_it,k_it,alpha_clean)
         flag=(res['T2']>res['T2_UCL'])|(res['Q']>res['Q_UCL'])
         n_rem=int(flag.sum())
-        log.append(dict(Iter=it,Prima=n_it,Rimossi=n_rem,Dopo=n_it-n_rem))
+        log.append(dict(Iter=it,Before=n_it,Removed=n_rem,After=n_it-n_rem))
         if n_rem==0: break
         idx_c=np.where(mask)[0]; mask[idx_c[flag]]=False
     return mask, pd.DataFrame(log)
@@ -167,24 +218,23 @@ def iterative_cleaning(X_raw, k_clean, alpha_clean, max_iter=10):
 
 def chart_line(values, ucl, title, color, flags=None):
     fig=go.Figure()
-    fig.add_scatter(x=np.arange(len(values)).tolist(), y=values.tolist(),
-                    mode='lines+markers', line=dict(color=color,width=1.2),
+    fig.add_scatter(x=np.arange(len(values)).tolist(),y=values.tolist(),
+                    mode='lines+markers',line=dict(color=color,width=1.2),
                     marker=dict(size=5,color=color),
-                    hovertemplate='Ciclo %{x}<br>%{y:.3f}<extra></extra>', name='Value')
-    fig.add_hline(y=ucl, line_dash='dash', line_color='#e74c3c', line_width=1.5,
-                  annotation_text=f'UCL={ucl:.3f}', annotation_position='right')
+                    hovertemplate='Cycle %{x}<br>%{y:.3f}<extra></extra>',name='Value')
+    fig.add_hline(y=ucl,line_dash='dash',line_color='#e74c3c',line_width=1.5,
+                  annotation_text=f'UCL={ucl:.3f}',annotation_position='right')
     if flags is not None and flags.any():
         fi=np.where(flags)[0]
-        fig.add_scatter(x=fi.tolist(), y=values[fi].tolist(), mode='markers',
+        fig.add_scatter(x=fi.tolist(),y=values[fi].tolist(),mode='markers',
                         marker=dict(size=10,color='#e74c3c',symbol='x',line=dict(width=2)),
-                        name='Anomaly',
-                        hovertemplate='Ciclo %{x}<br>%{y:.3f}<extra></extra>')
+                        name='Anomaly',hovertemplate='Cycle %{x}<br>%{y:.3f}<extra></extra>')
     fig.update_layout(title=dict(text=title,font=dict(family='IBM Plex Mono',size=13)),
-                      xaxis_title='Cycle', height=290,
+                      xaxis_title='Cycle',height=290,
                       margin=dict(l=10,r=10,t=40,b=30),
-                      plot_bgcolor='#fafafa', paper_bgcolor='white',
+                      plot_bgcolor='#fafafa',paper_bgcolor='white',
                       font=dict(family='IBM Plex Sans'),
-                      legend=dict(orientation='h',y=-0.25), hovermode='x unified')
+                      legend=dict(orientation='h',y=-0.25),hovermode='x unified')
     return fig
 
 
@@ -194,171 +244,156 @@ def chart_contribution(contrib, ucl_v, lcl_v, fn, title):
     colors=['#e74c3c' if (contrib[i]>ucl_v[i] or contrib[i]<lcl_v[i])
             else '#2c3e50' for i in range(p)]
     fig=go.Figure()
-    fig.add_bar(x=xax, y=contrib.tolist(), marker_color=colors,
+    fig.add_bar(x=xax,y=contrib.tolist(),marker_color=colors,
                 customdata=labels,
-                hovertemplate='[%{x}] %{customdata}<br>Contributo: %{y:.4f}<extra></extra>',
+                hovertemplate='[%{x}] %{customdata}<br>Contribution: %{y:.4f}<extra></extra>',
                 name='Contribution')
-    fig.add_scatter(x=xax, y=ucl_v.tolist(), mode='lines',
+    fig.add_scatter(x=xax,y=ucl_v.tolist(),mode='lines',
                     line=dict(color='#e74c3c',dash='dash',width=1.5),
-                    name='UCL', hoverinfo='skip')
-    fig.add_scatter(x=xax, y=lcl_v.tolist(), mode='lines',
+                    name='UCL',hoverinfo='skip')
+    fig.add_scatter(x=xax,y=lcl_v.tolist(),mode='lines',
                     line=dict(color='#e74c3c',dash='dash',width=1.5),
-                    name='LCL', hoverinfo='skip')
-    fig.add_hline(y=0, line_color='black', line_width=0.8)
+                    name='LCL',hoverinfo='skip')
+    fig.add_hline(y=0,line_color='black',line_width=0.8)
     fig.update_layout(title=dict(text=title,font=dict(family='IBM Plex Mono',size=12)),
-                      xaxis=dict(title='Variabile (indice)',
+                      xaxis=dict(title='Variable (index)',
                                  tickvals=xax,ticktext=[str(x) for x in xax]),
-                      yaxis_title='Contributo (signed)', height=320,
+                      yaxis_title='Contribution (signed)',height=320,
                       margin=dict(l=10,r=10,t=40,b=30),
-                      plot_bgcolor='#fafafa', paper_bgcolor='white',
+                      plot_bgcolor='#fafafa',paper_bgcolor='white',
                       font=dict(family='IBM Plex Sans'),
                       legend=dict(orientation='h',y=-0.3))
-    exceed=[(i+1, labels[i], round(float(contrib[i]),4),
-             round(float(lcl_v[i]),4), round(float(ucl_v[i]),4))
+    exceed=[(i+1,labels[i],round(float(contrib[i]),4),
+             round(float(lcl_v[i]),4),round(float(ucl_v[i]),4))
             for i in range(p) if contrib[i]>ucl_v[i] or contrib[i]<lcl_v[i]]
-    return fig, exceed
+    return fig,exceed
 
 
-def chart_score(T, lam, T2_UCL, evr, pc_i, pc_j, flagged):
+def chart_score(T,lam,T2_UCL,evr,pc_i,pc_j,flagged):
     ang=np.linspace(0,2*np.pi,400)
     a=np.sqrt(T2_UCL*lam[pc_i]); b=np.sqrt(T2_UCL*lam[pc_j]); ok=~flagged
     fig=go.Figure()
-    fig.add_scatter(x=T[ok,pc_i].tolist(), y=T[ok,pc_j].tolist(), mode='markers',
-                    marker=dict(size=5,color='#2c3e50',opacity=0.6), name='In control',
+    fig.add_scatter(x=T[ok,pc_i].tolist(),y=T[ok,pc_j].tolist(),mode='markers',
+                    marker=dict(size=5,color='#2c3e50',opacity=0.6),name='In control',
                     hovertemplate=f'PC{pc_i+1}:%{{x:.3f}}<br>PC{pc_j+1}:%{{y:.3f}}<extra></extra>')
     if flagged.any():
         fi=np.where(flagged)[0]
-        fig.add_scatter(x=T[fi,pc_i].tolist(), y=T[fi,pc_j].tolist(), mode='markers',
+        fig.add_scatter(x=T[fi,pc_i].tolist(),y=T[fi,pc_j].tolist(),mode='markers',
                         marker=dict(size=9,color='#e74c3c',symbol='x',line=dict(width=2)),
                         name='Anomaly',
                         hovertemplate=f'PC{pc_i+1}:%{{x:.3f}}<br>PC{pc_j+1}:%{{y:.3f}}<extra></extra>')
-    fig.add_scatter(x=(a*np.cos(ang)).tolist(), y=(b*np.sin(ang)).tolist(),
-                    mode='lines', line=dict(color='#95a5a6',dash='dash',width=1.2),
-                    name='UCL ellipse', hoverinfo='skip')
+    fig.add_scatter(x=(a*np.cos(ang)).tolist(),y=(b*np.sin(ang)).tolist(),
+                    mode='lines',line=dict(color='#95a5a6',dash='dash',width=1.2),
+                    name='T² UCL ellipse',hoverinfo='skip')
     fig.add_hline(y=0,line_color='#ecf0f1',line_width=0.8)
     fig.add_vline(x=0,line_color='#ecf0f1',line_width=0.8)
     fig.update_layout(
         title=dict(text=f'Score plot PC{pc_i+1} ({evr[pc_i]:.1f}%) vs PC{pc_j+1} ({evr[pc_j]:.1f}%)',
                    font=dict(family='IBM Plex Mono',size=12)),
-        xaxis_title=f'PC{pc_i+1}', yaxis_title=f'PC{pc_j+1}',
-        height=380, margin=dict(l=10,r=10,t=40,b=30),
-        plot_bgcolor='#fafafa', paper_bgcolor='white',
-        font=dict(family='IBM Plex Sans'), legend=dict(orientation='h',y=-0.2))
+        xaxis_title=f'PC{pc_i+1}',yaxis_title=f'PC{pc_j+1}',
+        height=380,margin=dict(l=10,r=10,t=40,b=30),
+        plot_bgcolor='#fafafa',paper_bgcolor='white',
+        font=dict(family='IBM Plex Sans'),legend=dict(orientation='h',y=-0.2))
     return fig
 
 
-def chart_loading(P, fn, evr, pc_i, pc_j):
+def chart_loading(P,fn,evr,pc_i,pc_j):
     p=P.shape[0]; labels=fn if fn else [f'Var {i+1}' for i in range(p)]
     fig=go.Figure()
-    fig.add_scatter(x=P[:,pc_i].tolist(), y=P[:,pc_j].tolist(),
+    fig.add_scatter(x=P[:,pc_i].tolist(),y=P[:,pc_j].tolist(),
                     mode='markers+text',
                     marker=dict(size=9,color='#2980b9',line=dict(color='white',width=1)),
                     text=[str(i+1) for i in range(p)],
-                    textposition='top center', textfont=dict(size=9,color='#1a1a2e'),
+                    textposition='top center',textfont=dict(size=9,color='#1a1a2e'),
                     customdata=labels,
                     hovertemplate='<b>%{customdata}</b><br>'
                                   f'PC{pc_i+1}: %{{x:.4f}}<br>PC{pc_j+1}: %{{y:.4f}}<extra></extra>',
-                    name='Variabili', showlegend=False)
+                    name='Variables',showlegend=False)
     fig.add_hline(y=0,line_color='#bdc3c7',line_width=0.8)
     fig.add_vline(x=0,line_color='#bdc3c7',line_width=0.8)
     fig.update_layout(
         title=dict(text=f'Loading plot PC{pc_i+1} ({evr[pc_i]:.1f}%) vs PC{pc_j+1} ({evr[pc_j]:.1f}%)',
                    font=dict(family='IBM Plex Mono',size=12)),
-        xaxis_title=f'PC{pc_i+1} loading', yaxis_title=f'PC{pc_j+1} loading',
-        height=500, margin=dict(l=10,r=10,t=50,b=30),
-        plot_bgcolor='#fafafa', paper_bgcolor='white',
+        xaxis_title=f'PC{pc_i+1} loading',yaxis_title=f'PC{pc_j+1} loading',
+        height=500,margin=dict(l=10,r=10,t=50,b=30),
+        plot_bgcolor='#fafafa',paper_bgcolor='white',
         font=dict(family='IBM Plex Sans'))
     return fig
 
 
-def show_contribution_block(model, Xs, E, T, obs_idx, fn, key_suffix):
-    """Renders T2 and Q contribution plots for a given observation index."""
+def show_contribution_block(model,Xs,E,T,obs_idx,fn,key_suffix):
     lam=model['eigenvalues']; P=model['loadings']
     c_t2=Xs[obs_idx]*(P@(T[obs_idx]/lam)); c_q=E[obs_idx]
     top_t2=np.argsort(np.abs(c_t2))[::-1][:3].tolist()
-    top_q =np.argsort(np.abs(c_q))[::-1][:3].tolist()
+    top_q=np.argsort(np.abs(c_q))[::-1][:3].tolist()
     p_count=len(fn)
 
-    with st.expander("📋 Variable Index", expanded=False):
+    with st.expander("📋 Variable Index",expanded=False):
         st.dataframe(pd.DataFrame({'Index':range(1,p_count+1),'Variable':fn}),
-                     use_container_width=True, hide_index=True)
+                     use_container_width=True,hide_index=True)
 
-    col_l, col_r = st.columns(2)
+    col_l,col_r=st.columns(2)
     with col_l:
-        fig_t2, exc_t2 = chart_contribution(
-            c_t2, model['T2contrib_UCL'], model['T2contrib_LCL'],
-            fn, f'T² Contribution — Obs {obs_idx}')
-        st.plotly_chart(fig_t2, use_container_width=True, key=f'ct2_{key_suffix}')
-        df_t2=pd.DataFrame({
-            'Idx':range(1,p_count+1), 'Variable':fn,
-            'Contribution':c_t2.round(4),
-            'LCL':model['T2contrib_LCL'].round(4),
-            'UCL':model['T2contrib_UCL'].round(4),
-            'Out of limit':['🔴' if (c_t2[i]>model['T2contrib_UCL'][i]
-                              or c_t2[i]<model['T2contrib_LCL'][i])
-                     else '✅' for i in range(p_count)]})
+        fig_t2,exc_t2=chart_contribution(c_t2,model['T2contrib_UCL'],
+                                          model['T2contrib_LCL'],fn,f'T² Contribution — Obs {obs_idx}')
+        st.plotly_chart(fig_t2,use_container_width=True,key=f'ct2_{key_suffix}')
+        df_t2=pd.DataFrame({'Idx':range(1,p_count+1),'Variable':fn,
+                             'Contribution':c_t2.round(4),
+                             'LCL':model['T2contrib_LCL'].round(4),
+                             'UCL':model['T2contrib_UCL'].round(4),
+                             'Out':['🔴' if (c_t2[i]>model['T2contrib_UCL'][i]
+                                             or c_t2[i]<model['T2contrib_LCL'][i])
+                                    else '✅' for i in range(p_count)]})
         with st.expander("T² Table"):
-            st.dataframe(df_t2, use_container_width=True, hide_index=True)
+            st.dataframe(df_t2,use_container_width=True,hide_index=True)
         if exc_t2:
-            st.markdown("**Out-of-limit variables T²:**")
-            st.dataframe(pd.DataFrame(exc_t2,
-                         columns=['Idx','Variable','Value','LCL','UCL']),
-                         use_container_width=True, hide_index=True)
+            st.markdown("**Out-of-limit — T²:**")
+            st.dataframe(pd.DataFrame(exc_t2,columns=['Idx','Variable','Value','LCL','UCL']),
+                         use_container_width=True,hide_index=True)
 
     with col_r:
-        fig_q, exc_q = chart_contribution(
-            c_q, model['Qcontrib_UCL'], model['Qcontrib_LCL'],
-            fn, f'Q Contribution — Obs {obs_idx}')
-        st.plotly_chart(fig_q, use_container_width=True, key=f'cq_{key_suffix}')
-        df_q=pd.DataFrame({
-            'Idx':range(1,p_count+1), 'Variable':fn,
-            'Contribution':c_q.round(4),
-            'LCL':model['Qcontrib_LCL'].round(4),
-            'UCL':model['Qcontrib_UCL'].round(4),
-            'Out of limit':['🔴' if (c_q[i]>model['Qcontrib_UCL'][i]
-                              or c_q[i]<model['Qcontrib_LCL'][i])
-                     else '✅' for i in range(p_count)]})
+        fig_q,exc_q=chart_contribution(c_q,model['Qcontrib_UCL'],
+                                        model['Qcontrib_LCL'],fn,f'Q Contribution — Obs {obs_idx}')
+        st.plotly_chart(fig_q,use_container_width=True,key=f'cq_{key_suffix}')
+        df_q=pd.DataFrame({'Idx':range(1,p_count+1),'Variable':fn,
+                            'Contribution':c_q.round(4),
+                            'LCL':model['Qcontrib_LCL'].round(4),
+                            'UCL':model['Qcontrib_UCL'].round(4),
+                            'Out':['🔴' if (c_q[i]>model['Qcontrib_UCL'][i]
+                                            or c_q[i]<model['Qcontrib_LCL'][i])
+                                   else '✅' for i in range(p_count)]})
         with st.expander("Q Table"):
-            st.dataframe(df_q, use_container_width=True, hide_index=True)
+            st.dataframe(df_q,use_container_width=True,hide_index=True)
         if exc_q:
-            st.markdown("**Out-of-limit variables Q:**")
-            st.dataframe(pd.DataFrame(exc_q,
-                         columns=['Idx','Variable','Value','LCL','UCL']),
-                         use_container_width=True, hide_index=True)
+            st.markdown("**Out-of-limit — Q:**")
+            st.dataframe(pd.DataFrame(exc_q,columns=['Idx','Variable','Value','LCL','UCL']),
+                         use_container_width=True,hide_index=True)
 
-    return top_t2, top_q
+    return top_t2,top_q
 
 
-def show_anomaly_table_and_contrib(model, T2_arr, Q_arr, Xs, E, T_arr,
-                                   fn, table_key, prefix):
-    """Shows sorted anomaly table + contribution plots for selected row."""
-    flagged_idx=np.where(
-        (T2_arr>model['T2_UCL']) | (Q_arr>model['Q_UCL'])
-    )[0]
+def show_anomaly_table_and_contrib(model,T2_arr,Q_arr,Xs,E,T_arr,fn,table_key,prefix):
+    flagged_idx=np.where((T2_arr>model['T2_UCL'])|(Q_arr>model['Q_UCL']))[0]
     if len(flagged_idx)==0:
         st.markdown("<div class='ok-box'>✅ No anomalies detected.</div>",
                     unsafe_allow_html=True)
-        return
+        return None
 
-    st.caption(f"{len(flagged_idx)} cicli fuori controllo — clicca una riga per analizzarla.")
+    st.caption(f"{len(flagged_idx)} out-of-control observations — click a row to analyse it.")
     df_anom=pd.DataFrame({
-        'Cycle':       flagged_idx,
-        'T²':          T2_arr[flagged_idx].round(3),
-        'T²/UCL':      (T2_arr[flagged_idx]/model['T2_UCL']).round(2),
-        'Q':           Q_arr[flagged_idx].round(3),
-        'Q/UCL':       (Q_arr[flagged_idx]/model['Q_UCL']).round(2),
-        'T² flag':     T2_arr[flagged_idx]>model['T2_UCL'],
-        'Q flag':      Q_arr[flagged_idx]>model['Q_UCL'],
-        'Severity×UCL':np.maximum(
-            T2_arr[flagged_idx]/model['T2_UCL'],
-            Q_arr[flagged_idx]/model['Q_UCL']
-        ).round(2),
+        'Cycle':        flagged_idx,
+        'T²':           T2_arr[flagged_idx].round(3),
+        'T²/UCL':       (T2_arr[flagged_idx]/model['T2_UCL']).round(2),
+        'Q':            Q_arr[flagged_idx].round(3),
+        'Q/UCL':        (Q_arr[flagged_idx]/model['Q_UCL']).round(2),
+        'T² flag':      T2_arr[flagged_idx]>model['T2_UCL'],
+        'Q flag':       Q_arr[flagged_idx]>model['Q_UCL'],
+        'Severity×UCL': np.maximum(T2_arr[flagged_idx]/model['T2_UCL'],
+                                   Q_arr[flagged_idx]/model['Q_UCL']).round(2),
     }).sort_values('Severity×UCL',ascending=False).reset_index(drop=True)
 
-    sel=st.dataframe(df_anom, use_container_width=True, hide_index=True,
-                     on_select='rerun', selection_mode='single-row',
-                     key=table_key)
-
+    sel=st.dataframe(df_anom,use_container_width=True,hide_index=True,
+                     on_select='rerun',selection_mode='single-row',key=table_key)
     obs=None
     if sel and sel.selection and sel.selection.get('rows'):
         obs=int(df_anom.iloc[sel.selection['rows'][0]]['Cycle'])
@@ -366,19 +401,17 @@ def show_anomaly_table_and_contrib(model, T2_arr, Q_arr, Xs, E, T_arr,
         obs=int(df_anom.iloc[0]['Cycle'])
 
     t2_obs=float(T2_arr[obs]); q_obs=float(Q_arr[obs])
-    ratio=max(t2_obs/model['T2_UCL'], q_obs/model['Q_UCL'])
+    ratio=max(t2_obs/model['T2_UCL'],q_obs/model['Q_UCL'])
     st.markdown(
-        f"<div class='alarm-box'><strong>Ciclo {obs} — "
+        f"<div class='alarm-box'><strong>Cycle {obs} — "
         f"{'🔴 ANOMALY' if ratio>=1.5 else '⚠️ WARNING'}</strong><br>"
         f"T²={t2_obs:.3f} ({t2_obs/model['T2_UCL']:.2f}×UCL) | "
         f"Q={q_obs:.3f} ({q_obs/model['Q_UCL']:.2f}×UCL)</div>",
         unsafe_allow_html=True)
 
     st.markdown("#### Contribution plots")
-    top_t2, top_q = show_contribution_block(
-        model, Xs, E, T_arr, obs, fn, f'{prefix}_{obs}')
-
-    return obs, t2_obs, q_obs, ratio, top_t2, top_q
+    top_t2,top_q=show_contribution_block(model,Xs,E,T_arr,obs,fn,f'{prefix}_{obs}')
+    return obs,t2_obs,q_obs,ratio,top_t2,top_q
 
 
 # ═══════════════════════════════════════════════
@@ -387,7 +420,8 @@ def show_anomaly_table_and_contrib(model, T2_arr, Q_arr, Xs, E, T_arr,
 for k,v in [('model',None),('feature_names',[]),('y_names',[]),
             ('df_X',None),('df_Y',None),('k_chosen',None),
             ('mon',None),('df_test_X',None),('anomaly_log',[]),
-            ('rmsecv_computed',False),('rmsecv_result',None)]:
+            ('rmsecv_computed',False),('rmsecv_result',None),
+            ('process_context',''),('context_saved',False)]:
     if k not in st.session_state:
         st.session_state[k]=v
 
@@ -397,33 +431,120 @@ for k,v in [('model',None),('feature_names',[]),('y_names',[]),
 # ═══════════════════════════════════════════════
 with st.sidebar:
     st.markdown("# 🏭 Process Monitor")
-    st.markdown("**PCA-SPC · Injection Molding**")
+    st.markdown("**PCA-SPC · Industrial Monitoring**")
     st.divider()
+
+    # Context summary in sidebar
+    if st.session_state.context_saved and st.session_state.process_context:
+        st.markdown("**⚙️ Process context loaded**")
+        st.markdown(
+            f"<div class='ctx-box'>{st.session_state.process_context[:200]}"
+            f"{'...' if len(st.session_state.process_context)>200 else ''}</div>",
+            unsafe_allow_html=True)
+        st.divider()
+
     alpha=st.slider("UCL Confidence (α)",0.90,0.99,0.95,0.01)
-    y_cols_raw=st.text_area("Y Variables — one per line")
+    y_cols_raw=st.text_area("Y Variables — one per line",
+                            placeholder="e.g. cushion position\ncycle time")
     y_cols=[c.strip() for c in y_cols_raw.split('\n') if c.strip()]
-    excl_raw=st.text_area("Columns to exclude — one per line")
+    excl_raw=st.text_area("Columns to exclude — one per line",
+                          placeholder="e.g. 1\ntimestamp")
     excl_cols=[c.strip() for c in excl_raw.split('\n') if c.strip()]
     st.divider()
-    st.caption("Add GEMINI_API_KEY to Streamlit Secrets to enable AI explanations.")
+    st.caption("Add GEMINI_API_KEY to Streamlit Secrets to enable AI features.")
 
 
 # ═══════════════════════════════════════════════
 #  TABS
 # ═══════════════════════════════════════════════
 st.markdown("# 🏭 Process Monitor")
-tab1,tab2,tab3,tab4,tab5=st.tabs([
-    "📂 Dataset","📐 PC Selection","🔧 Calibration",
-    "📊 Loadings & Scores","🔍 Monitoring"])
+tab0,tab1,tab2,tab3,tab4,tab5=st.tabs([
+    "⚙️ Process Context",
+    "📂 Dataset",
+    "📐 PC Selection",
+    "🔧 Calibration",
+    "📊 Loadings & Scores",
+    "🔍 Monitoring"])
 
 
-# ══════════════════════════════
+# ══════════════════════════════════════════
+#  TAB 0 — PROCESS CONTEXT
+# ══════════════════════════════════════════
+with tab0:
+    st.markdown("### ⚙️ Process Context")
+    st.markdown(
+        "Describe your process here. This information will be used by the AI "
+        "to contextualise every analysis and provide more relevant answers.\n\n"
+        "**What to include:** machine/equipment type, process name, product, "
+        "raw material, key process variables, known issues or constraints, "
+        "quality targets, anything else relevant."
+    )
+    st.markdown("---")
+
+    ctx_input = st.text_area(
+        "Process description",
+        value=st.session_state.process_context,
+        height=220,
+        placeholder=(
+            "Example:\n"
+            "Machine: BMB injection molding press, 450T\n"
+            "Process: injection molding of PP automotive component\n"
+            "Material: polypropylene, MFI 12, dried at 80°C for 4h\n"
+            "Product: door panel bracket, ~180g\n"
+            "Key variables: injection pressure, cushion position, fill time, "
+            "melt temperature, screw back pressure\n"
+            "Known issues: cushion position drift after long production runs, "
+            "sensitive to material lot changes\n"
+            "Quality target: cushion position 18.5 ± 0.5mm, cycle time < 45s"
+        ),
+        key='ctx_textarea'
+    )
+
+    col_save, col_clear = st.columns([2, 1])
+    with col_save:
+        if st.button("💾 Save context", type="primary", use_container_width=True):
+            st.session_state.process_context = ctx_input.strip()
+            st.session_state.context_saved = True
+            st.success("✅ Context saved — all AI responses will now be contextualised.")
+    with col_clear:
+        if st.button("🗑️ Clear", use_container_width=True):
+            st.session_state.process_context = ''
+            st.session_state.context_saved = False
+            st.rerun()
+
+    if st.session_state.context_saved and st.session_state.process_context:
+        st.markdown("---")
+        st.markdown("**Preview — how AI sees your process:**")
+        st.markdown(
+            f"<div class='ctx-box'>{st.session_state.process_context.replace(chr(10),'<br>')}</div>",
+            unsafe_allow_html=True)
+
+        st.markdown("---")
+        # AI summary of the process context
+        prompt_ctx = (
+            f"The user has described the following industrial process:\n\n"
+            f"{st.session_state.process_context}\n\n"
+            "In 4-5 bullet points, summarise:\n"
+            "- What type of process this is\n"
+            "- What the most critical variables are likely to be\n"
+            "- What types of anomalies are most common in this kind of process\n"
+            "- What PCA-SPC can and cannot detect in this context\n"
+            "Be concise and practical. No generic statements."
+        )
+        llm_button("Generate process summary", prompt_ctx,
+                   key='ai_ctx', max_tokens=500)
+        open_chat("Process context: " + st.session_state.process_context,
+                  chat_key='ctx')
+
+
+# ══════════════════════════════════════════
 #  TAB 1 — DATASET
-# ══════════════════════════════
+# ══════════════════════════════════════════
 with tab1:
     st.markdown("### Load Data")
-    up=st.file_uploader("CSV or Excel file from USB",
-                        type=['csv','xlsx','xls'], key='up_main')
+    st.caption("Upload the CSV or Excel file exported from the machine.")
+
+    up=st.file_uploader("CSV or Excel file",type=['csv','xlsx','xls'],key='up_main')
     if up:
         df_raw=(pd.read_csv(up) if up.name.endswith('.csv') else pd.read_excel(up))
         df_raw.columns=df_raw.columns.astype(str)
@@ -465,23 +586,37 @@ with tab1:
 
         st.markdown("---")
         df_Xf=df_X.fillna(df_X.mean())
-        desc_str=df_Xf.describe().round(3).to_string()
+        desc_str=df_Xf.describe().round(2).to_string()
         corr=df_Xf.corr().abs()
         corr_np=corr.values.copy(); np.fill_diagonal(corr_np,0)
         corr_f=pd.DataFrame(corr_np,index=corr.index,columns=corr.columns)
         top_corr="\n".join(f"  {a}↔{b}: {v:.2f}"
                            for (a,b),v in corr_f.unstack().nlargest(5).items())
-        prompt_ds=(f"Sei un esperto di stampaggio a iniezione.\n"
-                   f"Dataset: {len(df_X)} cicli, {len(x_cols)} X, {len(y_valid)} Y.\n"
-                   f"Statistiche:\n{desc_str}\nTop correlazioni:\n{top_corr}\n"
-                   f"Provide in English: general overview, high-variability variables, "
-                   f"suspicious values, relevant correlations for PCA, recommendations.")
-        llm_button("Generate dataset description", prompt_ds, key='ai_ds')
+
+        prompt_ds=(
+            f"{get_process_context()}\n"
+            f"Dataset loaded: {len(df_X)} observations, {len(x_cols)} X variables, "
+            f"{len(y_valid)} Y variables ({', '.join(y_valid) if y_valid else 'none'}).\n"
+            f"Descriptive stats:\n{desc_str}\n"
+            f"Top correlations:\n{top_corr}\n\n"
+            "Provide a concise analysis in 5 bullet points:\n"
+            "• Data quality (missing values, constants, outliers)\n"
+            "• Variables with high variability (CV%) — flag if unusual\n"
+            "• Key correlations relevant to PCA\n"
+            "• Any concern before modelling\n"
+            "• One specific recommendation\n"
+            "Be direct. No generic statements. Reference specific variable names."
+        )
+        llm_button("Analyse dataset", prompt_ds, key='ai_ds', max_tokens=600)
+
+        section_ctx_ds = (f"Dataset: {len(df_X)} obs, {len(x_cols)} X vars. "
+                          f"Top correlations: {top_corr}")
+        open_chat(section_ctx_ds, chat_key='ds')
 
 
-# ══════════════════════════════
+# ══════════════════════════════════════════
 #  TAB 2 — PC SELECTION
-# ══════════════════════════════
+# ══════════════════════════════════════════
 with tab2:
     if st.session_state.df_X is None:
         st.info("⬆️ Load the dataset first.")
@@ -510,13 +645,13 @@ with tab2:
                          annotation_text=f'Kaiser ({100/n_vars:.1f}%)',annotation_position='right')
             fig.add_vline(x=k_kaiser,line_dash='dash',line_color='#e74c3c',
                          annotation_text=f'k={k_kaiser}',annotation_position='top right')
-            fig.update_layout(xaxis_title='PC',yaxis_title='Varianza (%)',height=320,
+            fig.update_layout(xaxis_title='PC',yaxis_title='Variance (%)',height=320,
                              margin=dict(l=10,r=10,t=20,b=30),
                              plot_bgcolor='#fafafa',paper_bgcolor='white',showlegend=False)
             st.plotly_chart(fig,use_container_width=True,key='chart_scree')
-            st.info(f"💡 Kaiser: **k = {k_kaiser}** PC")
+            st.info(f"💡 Kaiser criterion: **k = {k_kaiser}** PCs")
 
-        elif grafico=="Varianza cumulativa":
+        elif grafico=="Cumulative variance":
             fig=go.Figure()
             fig.add_scatter(x=ks,y=cum.tolist(),mode='lines+markers',
                             line=dict(color='#2980b9',width=2),marker=dict(size=6),
@@ -529,12 +664,12 @@ with tab2:
                          annotation_text=f'k={k_90}',annotation_position='top left')
             fig.add_vline(x=k_95,line_dash='dot',line_color='#e74c3c',
                          annotation_text=f'k={k_95}',annotation_position='top right')
-            fig.update_layout(xaxis_title='Numero PC',yaxis_title='Varianza cumulativa (%)',
+            fig.update_layout(xaxis_title='Number of PCs',yaxis_title='Cumulative variance (%)',
                              yaxis=dict(range=[0,105]),height=320,
                              margin=dict(l=10,r=10,t=20,b=30),
                              plot_bgcolor='#fafafa',paper_bgcolor='white',showlegend=False)
             st.plotly_chart(fig,use_container_width=True,key='chart_cumvar')
-            st.info(f"💡 90%: **k={k_90}** | 95%: **k={k_95}**")
+            st.info(f"💡 90% variance → **k={k_90}** | 95% variance → **k={k_95}**")
 
         else:
             if not st.session_state.rmsecv_computed:
@@ -544,7 +679,7 @@ with tab2:
                     st.session_state.rmsecv_result=(bk,rcv)
                     st.session_state.rmsecv_computed=True; st.rerun()
                 else:
-                    st.info("Click to compute RMSECV.")
+                    st.info("Click to compute RMSECV (may take a few minutes).")
             else:
                 bk,rcv=st.session_state.rmsecv_result
                 fig=go.Figure()
@@ -556,11 +691,11 @@ with tab2:
                                 hovertemplate='PC%{x}<br>RMSECV:%{y:.4f}<extra></extra>')
                 fig.add_vline(x=bk,line_dash='dash',line_color='#e74c3c',
                              annotation_text=f'min k={bk}',annotation_position='top right')
-                fig.update_layout(xaxis_title='Numero PC',yaxis_title='RMSECV',height=320,
+                fig.update_layout(xaxis_title='Number of PCs',yaxis_title='RMSECV',height=320,
                                  margin=dict(l=10,r=10,t=20,b=30),
                                  plot_bgcolor='#fafafa',paper_bgcolor='white',showlegend=False)
                 st.plotly_chart(fig,use_container_width=True,key='chart_rmsecv')
-                st.info(f"💡 RMSECV minimo: **k = {bk}** PC")
+                st.info(f"💡 RMSECV minimum: **k = {bk}** PCs")
                 if st.button("🔄 Recalculate",key='btn_rmsecv_reset'):
                     st.session_state.rmsecv_computed=False; st.rerun()
 
@@ -575,21 +710,28 @@ with tab2:
                                   min_value=2,max_value=max_k,
                                   value=k_kaiser,step=1,key='k_input')
         st.session_state.k_chosen=int(k_chosen)
-        st.success(f"✅ k = **{k_chosen}** PC — explained variance: **{cum[k_chosen-1]:.1f}%**")
+        st.success(f"✅ k = **{k_chosen}** PCs — explained variance: **{cum[k_chosen-1]:.1f}%**")
 
         st.markdown("---")
-        prompt_pc=(f"You are an expert in PCA for injection molding.\n"
-                   f"Dataset: {n_obs} cicli, {n_vars} variabili.\n"
-                   f"Kaiser k={k_kaiser}, 90% var k={k_90}, 95% var k={k_95}.\n"
-                   f"Scelta utente: k={k_chosen} ({cum[k_chosen-1]:.1f}% varianza).\n"
-                   f"Explain in English what this number of PCs means for the process, "
-                   f"whether the choice is reasonable, and what is gained/lost with more or fewer PCs.")
-        llm_button("Interpret PC selection", prompt_pc, key='ai_pc')
+        prompt_pc=(
+            f"{get_process_context()}\n"
+            f"PCA on {n_obs} observations, {n_vars} variables.\n"
+            f"Kaiser: k={k_kaiser}, 90% var: k={k_90}, 95% var: k={k_95}. "
+            f"User selected: k={k_chosen} ({cum[k_chosen-1]:.1f}% variance).\n\n"
+            "In 3 bullet points:\n"
+            "• Is this k selection appropriate for the process described?\n"
+            "• What process phenomena are likely captured in the first PCs?\n"
+            "• Any concern with this choice?\n"
+            "Be specific. Max 4 lines total."
+        )
+        llm_button("Interpret PC selection", prompt_pc, key='ai_pc', max_tokens=350)
+        open_chat(f"PC selection: k={k_chosen}, {n_vars} variables, {n_obs} obs, "
+                  f"Kaiser={k_kaiser}, 90%var={k_90}", chat_key='pc')
 
 
-# ══════════════════════════════
+# ══════════════════════════════════════════
 #  TAB 3 — CALIBRATION
-# ══════════════════════════════
+# ══════════════════════════════════════════
 with tab3:
     if st.session_state.df_X is None:
         st.info("⬆️ Load the dataset first.")
@@ -601,11 +743,13 @@ with tab3:
         X_raw=df_X.values; k_use=st.session_state.k_chosen
 
         st.markdown("### 🧹 Data Cleaning (optional)")
+        st.caption("Removes anomalous cycles from the calibration set before fitting.")
         use_clean=st.toggle("Enable iterative cleaning",value=False,key='toggle_clean')
         clean_mask=np.ones(len(X_raw),dtype=bool)
 
         if use_clean:
-            alpha_clean=st.slider("Cleaning confidence",0.95,0.999,0.99,0.001,format="%.3f")
+            alpha_clean=st.slider("Cleaning confidence",0.95,0.999,0.99,0.001,format="%.3f",
+                                  help="0.99 = removes only clearly anomalous cycles")
             if st.button("▶ Run cleaning",key='btn_clean'):
                 sc_k=StandardScaler(); Xs_k=sc_k.fit_transform(X_raw)
                 eig_k=PCA(svd_solver='full').fit(Xs_k).explained_variance_
@@ -613,10 +757,10 @@ with tab3:
                 with st.spinner("Iterative cleaning..."):
                     clean_mask,log_df=iterative_cleaning(X_raw,k_cl,alpha_clean)
                 n_rem=int((~clean_mask).sum()); pct=n_rem/len(X_raw)*100
-                st.success(f"✅ Removed **{n_rem}** cicli ({pct:.1f}%)")
+                st.success(f"✅ Removed **{n_rem}** cycles ({pct:.1f}%) — Remaining: **{clean_mask.sum()}**")
                 st.dataframe(log_df,use_container_width=True,hide_index=True)
                 if pct>20:
-                    st.warning("⚠️ >20% rimossi — calibration data may not have been stable.")
+                    st.warning("⚠️ >20% removed — calibration period may not have been stable.")
 
         st.markdown("### 🔧 Build Model")
         if st.button("Build Phase I Model",type="primary",
@@ -628,7 +772,6 @@ with tab3:
                 st.session_state.model=mdl
             st.rerun()
 
-        # ── Sempre visibile se modello esiste ──────────────────
         if st.session_state.model is not None:
             mdl=st.session_state.model
             if st.button("🔄 Rebuild model",key='btn_refit'):
@@ -654,38 +797,57 @@ with tab3:
                                        'Phase I — Q (SPE)','#16a085',fQ),
                             use_container_width=True,key='p1_q')
 
-            # Contribution plots Phase I
             st.markdown("#### Contribution plots — Phase I anomalous cycles")
-            result=show_anomaly_table_and_contrib(
-                mdl, mdl['T2'], mdl['Q'],
-                mdl['X_scaled'], mdl['E'], mdl['scores'],
-                mdl['feature_names'], 'p1_table', 'p1')
+            result_p1=show_anomaly_table_and_contrib(
+                mdl,mdl['T2'],mdl['Q'],mdl['X_scaled'],mdl['E'],mdl['scores'],
+                mdl['feature_names'],'p1_table','p1')
 
-            if result:
-                obs_p1,t2_p1,q_p1,ratio_p1,top_t2_p1,top_q_p1=result
+            if result_p1:
+                obs_p1,t2_p1,q_p1,ratio_p1,top_t2_p1,top_q_p1=result_p1
                 st.markdown("---")
                 v_t2=[x_cols[i] for i in top_t2_p1]; v_q=[x_cols[i] for i in top_q_p1]
-                prompt_p1=(f"Ciclo anomalo {obs_p1} nel training set: "
-                           f"T²={t2_p1:.3f} ({t2_p1/mdl['T2_UCL']:.2f}×UCL), "
-                           f"Q={q_p1:.3f} ({q_p1/mdl['Q_UCL']:.2f}×UCL). "
-                           f"T² variables: {', '.join(v_t2)}. Q variables: {', '.join(v_q)}. "
-                           f"Explain in English whether it should be removed, and what it suggests about the process conditions "
-                           f"during data collection.")
-                llm_button("Interpret Phase I anomalous cycle",prompt_p1,key=f'ai_p1_{obs_p1}')
+                prompt_p1=(
+                    f"{get_process_context()}\n"
+                    f"Phase I anomalous cycle {obs_p1}: "
+                    f"T²={t2_p1:.3f} ({t2_p1/mdl['T2_UCL']:.2f}×UCL), "
+                    f"Q={q_p1:.3f} ({q_p1/mdl['Q_UCL']:.2f}×UCL).\n"
+                    f"Top T² variables: {', '.join(v_t2)}.\n"
+                    f"Top Q variables: {', '.join(v_q)}.\n\n"
+                    "In 3 bullet points:\n"
+                    "• Should this cycle be removed from calibration? Why?\n"
+                    "• What does it suggest about process conditions at that time?\n"
+                    "• Action recommended\n"
+                    "Max 5 lines. Be direct."
+                )
+                llm_button("Interpret Phase I anomaly", prompt_p1,
+                           key=f'ai_p1_{obs_p1}', max_tokens=350)
+            else:
+                st.success("✅ No anomalies in training set — clean calibration.")
 
             st.markdown("---")
-            prompt_cal=(f"Modello PCA-SPC: {len(mdl['T2'])} cicli, k={mdl['k']} PC, "
-                        f"T²UCL={mdl['T2_UCL']:.3f}, QUCL={mdl['Q_UCL']:.3f}, α={alpha}. "
-                        f"Residual flags: {n_flag} ({pct_f:.1f}%). "
-                        f"Variabili: {', '.join(mdl['feature_names'][:8])}. "
-                        f"Spiega what UCL values represent, whether residual flags are acceptable, "
-                        f"and how to interpret the charts.")
-            llm_button("Interpret calibration model",prompt_cal,key='ai_cal')
+            prompt_cal=(
+                f"{get_process_context()}\n"
+                f"PCA-SPC model: {len(mdl['T2'])} cycles, k={mdl['k']} PCs, "
+                f"T²UCL={mdl['T2_UCL']:.3f}, QUCL={mdl['Q_UCL']:.3f}, α={alpha}.\n"
+                f"Residual flags: {n_flag} ({pct_f:.1f}%).\n"
+                f"Variables: {', '.join(mdl['feature_names'][:10])}.\n\n"
+                "In 3 bullet points:\n"
+                "• Are the UCL values reasonable for this process?\n"
+                "• Are the residual flags acceptable?\n"
+                "• Is the model ready for Phase II monitoring?\n"
+                "Max 5 lines."
+            )
+            llm_button("Interpret calibration model", prompt_cal,
+                       key='ai_cal', max_tokens=350)
+
+            cal_ctx=(f"Model: k={mdl['k']} PCs, T²UCL={mdl['T2_UCL']:.3f}, "
+                     f"QUCL={mdl['Q_UCL']:.3f}, flags={n_flag} ({pct_f:.1f}%)")
+            open_chat(cal_ctx, chat_key='cal')
 
 
-# ══════════════════════════════
+# ══════════════════════════════════════════
 #  TAB 4 — LOADINGS & SCORES
-# ══════════════════════════════
+# ══════════════════════════════════════════
 with tab4:
     if st.session_state.model is None:
         st.info("⬆️ Build the model first.")
@@ -705,7 +867,7 @@ with tab4:
                      for a,b in all_pairs]
 
         st.markdown("### Select Chart")
-        tipo=st.radio("Tipo",["Loading plot","Score plot"],
+        tipo=st.radio("Type",["Loading plot","Score plot"],
                       horizontal=True,key='ls_tipo')
         coppia_idx=st.selectbox("PC pair",options=range(len(all_pairs)),
                                 format_func=lambda i: pair_labels[i],key='ls_coppia')
@@ -714,8 +876,8 @@ with tab4:
         if tipo=="Loading plot":
             st.plotly_chart(chart_loading(P,fn,evr_m,pc_i,pc_j),
                             use_container_width=True,key='load_chart')
-            st.caption("Numero = indice variabile. Hover per il nome completo. "
-                       "Vicine = correlate | Opposte = correlate negativamente.")
+            st.caption("Number = variable index. Hover to see full name. "
+                       "Close together = correlated | Opposite = negatively correlated.")
             df_load=pd.DataFrame({
                 'Index':range(1,P.shape[0]+1),'Variable':fn,
                 f'PC{pc_i+1}':P[:,pc_i].round(4),
@@ -726,22 +888,31 @@ with tab4:
         else:
             st.plotly_chart(chart_score(T_m,lam_m,mdl['T2_UCL'],evr_m,pc_i,pc_j,flag_m),
                             use_container_width=True,key='score_chart')
-            st.caption(f"Red dots: {int(flag_m.sum())} anomalous out of {len(T_m)}")
+            st.caption(f"Red dots: {int(flag_m.sum())} anomalies out of {len(T_m)}")
 
         st.markdown("---")
         top5=np.argsort(np.sqrt(P[:,pc_i]**2+P[:,pc_j]**2))[::-1][:5]
         top_str=", ".join(f"{fn[i]}({P[i,pc_i]:.3f}/{P[i,pc_j]:.3f})" for i in top5)
-        prompt_load=(f"{'Loading' if tipo=='Loading plot' else 'Score'} plot "
-                     f"PC{pc_i+1} ({evr_m[pc_i]:.1f}%) vs PC{pc_j+1} ({evr_m[pc_j]:.1f}%). "
-                     f"Top variabili: {top_str}. "
-                     f"Explain in English a un process engineer what the chart shows, "
-                     f"how to interpret variable positions and evident correlations.")
-        llm_button(f"Interpret chart",prompt_load,key='ai_load')
+        prompt_load=(
+            f"{get_process_context()}\n"
+            f"{'Loading' if tipo=='Loading plot' else 'Score'} plot: "
+            f"PC{pc_i+1} ({evr_m[pc_i]:.1f}%) vs PC{pc_j+1} ({evr_m[pc_j]:.1f}%).\n"
+            f"Most influential variables: {top_str}.\n\n"
+            "In 3 bullet points:\n"
+            "• What process phenomena do these PCs likely represent?\n"
+            "• What do the most influential variables tell us?\n"
+            "• Any notable correlation pattern?\n"
+            "Max 5 lines. Reference specific variables."
+        )
+        llm_button("Interpret chart", prompt_load, key='ai_load', max_tokens=400)
+        open_chat(f"{'Loading' if tipo=='Loading plot' else 'Score'} plot "
+                  f"PC{pc_i+1} vs PC{pc_j+1}. Top vars: {top_str}",
+                  chat_key='load')
 
 
-# ══════════════════════════════
+# ══════════════════════════════════════════
 #  TAB 5 — MONITORING
-# ══════════════════════════════
+# ══════════════════════════════════════════
 with tab5:
     if st.session_state.model is None:
         st.info("⬆️ Build the model first.")
@@ -749,7 +920,7 @@ with tab5:
         mdl=st.session_state.model; fn=mdl['feature_names']
 
         st.markdown("### Load New Data from USB")
-        up_test=st.file_uploader("File CSV o Excel",
+        up_test=st.file_uploader("CSV or Excel file",
                                   type=['csv','xlsx','xls'],key='up_test')
         if up_test:
             df_tr=(pd.read_csv(up_test) if up_test.name.endswith('.csv')
@@ -763,7 +934,6 @@ with tab5:
                 st.session_state.mon=monitor_new(mdl,df_test_X.values)
                 st.session_state.df_test_X=df_test_X
 
-        # Sempre dal session_state
         if st.session_state.mon is not None:
             mon=st.session_state.mon; df_test_X=st.session_state.df_test_X
             n_test=len(df_test_X)
@@ -778,12 +948,17 @@ with tab5:
             c4.metric("Status",stato)
 
             st.markdown("---")
-            prompt_ov=(f"Processo: stampaggio a iniezione. Phase II: {n_test} cicli. "
-                       f"T² anomali: {n_t2} ({n_t2/n_test*100:.1f}%). "
-                       f"Q anomali: {n_q} ({n_q/n_test*100:.1f}%). Stato: {stato}. "
-                       f"T²UCL={mdl['T2_UCL']:.3f}, QUCL={mdl['Q_UCL']:.3f}. "
-                       f"Explain to a shift supervisor what is happening and whether there is cause for concern.")
-            llm_button("Interpret process status",prompt_ov,key='ai_overview')
+            prompt_ov=(
+                f"{get_process_context()}\n"
+                f"Phase II: {n_test} cycles. "
+                f"T² anomalies: {n_t2} ({n_t2/n_test*100:.1f}%). "
+                f"Q anomalies: {n_q} ({n_q/n_test*100:.1f}%). Status: {stato}.\n"
+                f"T²UCL={mdl['T2_UCL']:.3f}, QUCL={mdl['Q_UCL']:.3f}.\n\n"
+                "In 2-3 lines: is the process stable? Is there cause for concern? "
+                "What should the shift supervisor do right now? Be direct."
+            )
+            llm_button("Interpret process status", prompt_ov,
+                       key='ai_overview', max_tokens=250)
 
             st.markdown("---")
             st.markdown("### Control Charts")
@@ -796,30 +971,43 @@ with tab5:
 
             st.markdown("### 🔍 Anomaly Analysis")
             result=show_anomaly_table_and_contrib(
-                mdl, mon['T2'], mon['Q'],
-                mon['Xn_s'], mon['En'], mon['Tn'],
-                fn, 'p2_table', 'p2')
+                mdl,mon['T2'],mon['Q'],mon['Xn_s'],mon['En'],mon['Tn'],
+                fn,'p2_table','p2')
 
             if result:
                 obs,t2_obs,q_obs,ratio,top_t2,top_q=result
                 st.markdown("---")
                 v_t2=[fn[i] for i in top_t2]; v_q=[fn[i] for i in top_q]
-                prompt_an=(f"Ciclo anomalo {obs}: T²={t2_obs:.3f} ({t2_obs/mdl['T2_UCL']:.2f}×UCL), "
-                           f"Q={q_obs:.3f} ({q_obs/mdl['Q_UCL']:.2f}×UCL). "
-                           f"T² variables: {', '.join(v_t2)}. Q variables: {', '.join(v_q)}. "
-                           f"Explain in English a un capoturno what is happening in the process "
-                           f"physically, the possible causes, and what to check on the machine.")
-                llm_button("Explain anomaly to technician",prompt_an,key=f'ai_an_{obs}')
+                prompt_an=(
+                    f"{get_process_context()}\n"
+                    f"Anomalous cycle {obs}: "
+                    f"T²={t2_obs:.3f} ({t2_obs/mdl['T2_UCL']:.2f}×UCL), "
+                    f"Q={q_obs:.3f} ({q_obs/mdl['Q_UCL']:.2f}×UCL).\n"
+                    f"T² driven by: {', '.join(v_t2)}.\n"
+                    f"Q driven by: {', '.join(v_q)}.\n\n"
+                    "For the shift supervisor — in 3 bullet points:\n"
+                    "• What is happening physically in the process?\n"
+                    "• Most likely cause (be specific, reference the variables)\n"
+                    "• Immediate action to take\n"
+                    "No statistics. Plain language. Max 6 lines."
+                )
+                llm_button("Explain anomaly to technician", prompt_an,
+                           key=f'ai_an_{obs}', max_tokens=400)
+
+                mon_ctx=(f"Cycle {obs}: T²={t2_obs:.3f} ({t2_obs/mdl['T2_UCL']:.2f}×UCL), "
+                         f"Q={q_obs:.3f} ({q_obs/mdl['Q_UCL']:.2f}×UCL). "
+                         f"T² vars: {', '.join(v_t2)}. Q vars: {', '.join(v_q)}.")
+                open_chat(mon_ctx, chat_key=f'mon_{obs}')
 
                 st.markdown("#### 📝 Log Intervention")
                 with st.form(f"log_{obs}"):
-                    azione=st.text_area("Corrective action",height=70,
-                                       placeholder="E.g.: increased back pressure from 80 to 95 bar")
-                    if st.form_submit_button("💾 Salva",use_container_width=True):
+                    azione=st.text_area("Corrective action taken",height=70,
+                                       placeholder="e.g. increased back pressure from 80 to 95 bar")
+                    if st.form_submit_button("💾 Save",use_container_width=True):
                         if azione:
                             st.session_state.anomaly_log.append({
                                 'Cycle':obs,'T²':round(t2_obs,3),'Q':round(q_obs,3),
-                                'Severità':f"{ratio:.2f}×UCL",'Intervento':azione})
+                                'Severity':f"{ratio:.2f}×UCL",'Action':azione})
                             st.success("✅ Saved.")
 
             if st.session_state.anomaly_log:
