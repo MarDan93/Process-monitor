@@ -400,11 +400,9 @@ with st.sidebar:
     st.markdown("**PCA-SPC · Injection Molding**")
     st.divider()
     alpha=st.slider("UCL Confidence (α)",0.90,0.99,0.95,0.01)
-    y_cols_raw=st.text_area("Y Variables — one per line",
-                            placeholder="Quota cuscino\nTempo ciclo")
+    y_cols_raw=st.text_area("Y Variables — one per line")
     y_cols=[c.strip() for c in y_cols_raw.split('\n') if c.strip()]
-    excl_raw=st.text_area("Columns to exclude — one per line",
-                          placeholder="1\ntimestamp")
+    excl_raw=st.text_area("Columns to exclude — one per line")
     excl_cols=[c.strip() for c in excl_raw.split('\n') if c.strip()]
     st.divider()
     st.caption("Add GEMINI_API_KEY to Streamlit Secrets to enable AI explanations.")
@@ -482,7 +480,7 @@ with tab1:
 
 
 # ══════════════════════════════
-#  TAB 2 — SELEZIONE PC
+#  TAB 2 — PC SELECTION
 # ══════════════════════════════
 with tab2:
     if st.session_state.df_X is None:
@@ -590,7 +588,7 @@ with tab2:
 
 
 # ══════════════════════════════
-#  TAB 3 — CALIBRAZIONE
+#  TAB 3 — CALIBRATION
 # ══════════════════════════════
 with tab3:
     if st.session_state.df_X is None:
@@ -742,7 +740,7 @@ with tab4:
 
 
 # ══════════════════════════════
-#  TAB 5 — MONITORAGGIO
+#  TAB 5 — MONITORING
 # ══════════════════════════════
 with tab5:
     if st.session_state.model is None:
