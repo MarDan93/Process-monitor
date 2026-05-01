@@ -1,7 +1,7 @@
 # Process-monitor
 # PCA-SPC Industrial Process Monitor
 
-> Multivariate Statistical Process Control for injection molding and manufacturing — built by a Process Engineer, for Process Engineers.
+> Multivariate Statistical Process Control for injection molding and manufacturing — built by a Process Engineer, for Process Engineers & Technicians
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35+-red?logo=streamlit)](https://streamlit.io)
