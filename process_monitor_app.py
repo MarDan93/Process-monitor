@@ -7,7 +7,22 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from scipy.stats import f, norm
 import google.generativeai as genai
-import pickle, json, io
+import pickle, json, io, re
+
+# Language detection — graceful fallback if not installed
+try:
+    from langdetect import detect as _detect_lang
+    def detect_language(text):
+        try:
+            code = _detect_lang(text[:500])
+            names = {'it':'Italian','en':'English','de':'German','fr':'French',
+                     'es':'Spanish','pt':'Portuguese','nl':'Dutch','pl':'Polish'}
+            return names.get(code, 'English')
+        except Exception:
+            return 'English'
+except ImportError:
+    def detect_language(text):
+        return 'English'
 
 st.set_page_config(page_title="Process Monitor", page_icon="🏭",
                    layout="wide", initial_sidebar_state="expanded")
@@ -178,19 +193,55 @@ def box(text, kind='info'):
     st.markdown(f"<div class='{css}'>{text}</div>", unsafe_allow_html=True)
 
 
-def ai_box(text):
-    # Format AI response: convert markdown-like **bold** and numbered lines
-    formatted = text.replace('**','<strong>',1)
-    i = 0
-    out = []
-    for ch in text:
-        out.append(ch)
-    # Simple formatting
-    html = text.replace('\n\n','<br><br>').replace('\n','<br>')
-    # Bold
-    import re
-    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-    st.markdown(f"<div class='ai-response'>{html}</div>", unsafe_allow_html=True)
+def ai_box(text, model_label=None):
+    """Render AI response with professional formatting."""
+    # Convert markdown to readable HTML
+    html = text
+
+    # **bold** → styled span
+    html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#1E40AF">\1</strong>', html)
+
+    # Numbered sections like "1. TITLE" or "**1. TITLE**"
+    html = re.sub(
+        r'(?m)^(\d+)\.\s+([A-ZÀÁÈÉÌÍÒÓÙÚ ]{3,})\s*$',
+        r'<div style="margin:14px 0 6px 0;font-weight:700;font-size:13px;'
+        r'color:#1E3A8A;text-transform:uppercase;letter-spacing:0.05em;'
+        r'border-left:3px solid #2563EB;padding-left:10px">'
+        r'\1. \2</div>',
+        html
+    )
+
+    # Bullet lines starting with • or -
+    html = re.sub(
+        r'(?m)^[•\-]\s+(.+)$',
+        r'<div style="display:flex;gap:8px;margin:5px 0;padding-left:4px">'
+        r'<span style="color:#2563EB;font-weight:700;flex-shrink:0">›</span>'
+        r'<span>\1</span></div>',
+        html
+    )
+
+    # Double newlines → paragraph break
+    html = re.sub(r'\n{2,}', '<div style="margin:8px 0"></div>', html)
+    html = html.replace('\n', '<br>')
+
+    # Wrap and render
+    st.markdown(
+        f"""<div style="
+            background:#F8FAFF;
+            border:1px solid #DBEAFE;
+            border-left:4px solid #2563EB;
+            border-radius:10px;
+            padding:18px 22px;
+            margin-top:12px;
+            font-size:14px;
+            line-height:1.75;
+            color:#1E293B;
+            box-shadow:0 2px 8px rgba(37,99,235,0.07);
+        ">{html}</div>""",
+        unsafe_allow_html=True
+    )
+    if model_label:
+        st.caption(f"✨ via {model_label}")
 
 
 # ═══════════════════════════════════════════
@@ -236,29 +287,38 @@ def call_claude_haiku(prompt):
         raise ValueError("anthropic library not installed.")
 
 
+def get_response_language():
+    """Detect language from process context, fallback to English."""
+    ctx = st.session_state.get('process_context','').strip()
+    if ctx:
+        return detect_language(ctx)
+    return 'English'
+
+
 def call_ai(prompt):
+    lang = get_response_language()
+    full_prompt = f"Always respond in {lang}.\n\n" + prompt
     for model_name, label in [("gemini-2.5-flash","Gemini 2.5 Flash"),
                                ("gemini-2.5-flash-lite","Gemini 2.5 Flash-Lite")]:
         try:
-            return call_gemini_model(prompt, model_name), label, None
+            return call_gemini_model(full_prompt, model_name), label, None
         except Exception as e:
             if not any(c in str(e).lower() for c in RATE_CODES):
                 return None, None, f"{label}: {e}"
     try:
-        return call_claude_haiku(prompt), "Claude Haiku", None
+        return call_claude_haiku(full_prompt), "Claude Haiku", None
     except Exception as e:
         return None, None, f"All models failed: {e}"
 
 
 def llm_button(label, prompt, key):
     if st.button(f"✨ {label}", key=key):
-        with st.spinner("Generating AI analysis..."):
+        with st.spinner("Analisi AI in corso..."):
             txt, model, err = call_ai(get_process_context() + "\n" + prompt)
         if err:
             st.error(f"AI error: {err}")
         else:
-            ai_box(txt)
-            st.caption(f"via {model}")
+            ai_box(txt, model)
 
 
 # ═══════════════════════════════════════════
@@ -267,8 +327,6 @@ def llm_button(label, prompt, key):
 
 @st.dialog("💬 AI Assistant", width="large")
 def chat_popup():
-    st.caption("Ask anything about your analysis. The AI knows your current process and model state.")
-
     def build_snapshot():
         lines = []
         if st.session_state.process_context:
@@ -283,7 +341,7 @@ def chat_popup():
             m = st.session_state.model
             nf = int(((m['T2']>m['T2_UCL'])|(m['Q']>m['Q_UCL'])).sum())
             lines.append(f"Model: k={m['k']} PCs, T²UCL={m['T2_UCL']:.3f}, "
-                         f"QUCL={m['Q_UCL']:.3f}, Phase I flags={nf}")
+                         f"QUCL={m['Q_UCL']:.3f}, flags={nf}")
         if st.session_state.mon_files:
             t2f = np.concatenate([f['mon']['T2_flag'] for f in st.session_state.mon_files])
             qf  = np.concatenate([f['mon']['Q_flag']  for f in st.session_state.mon_files])
@@ -291,23 +349,80 @@ def chat_popup():
             lines.append(f"Monitoring: {nt} cycles, {na} anomalies ({na/nt*100:.1f}%)")
         return "\n".join(lines) or "No data loaded yet."
 
-    # Chat history
+    lang = get_response_language()
+
+    # Render chat history as bubbles
+    chat_html = ""
     for msg in st.session_state.global_chat:
         if msg['role'] == 'user':
-            st.markdown(f"<div class='chat-user'>🧑 {msg['text']}</div>",
-                        unsafe_allow_html=True)
+            chat_html += f"""
+            <div style="display:flex;justify-content:flex-end;margin:8px 0">
+              <div style="background:#2563EB;color:white;border-radius:16px 16px 4px 16px;
+                          padding:10px 16px;max-width:80%;font-size:13px;line-height:1.5;
+                          box-shadow:0 1px 3px rgba(37,99,235,0.3)">
+                {msg['text']}
+              </div>
+            </div>"""
         else:
-            st.markdown(f"<div class='chat-ai'>🤖 {msg['text']}</div>",
-                        unsafe_allow_html=True)
+            # Format AI message
+            txt = msg['text']
+            txt = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', txt)
+            txt = txt.replace('\n','<br>')
+            chat_html += f"""
+            <div style="display:flex;justify-content:flex-start;margin:8px 0">
+              <div style="background:#F1F5F9;color:#1E293B;border-radius:16px 16px 16px 4px;
+                          padding:10px 16px;max-width:85%;font-size:13px;line-height:1.6;
+                          border:1px solid #E2E8F0">
+                <div style="font-size:10px;color:#64748B;margin-bottom:4px;font-weight:600;
+                            text-transform:uppercase;letter-spacing:0.05em">AI Assistant</div>
+                {txt}
+              </div>
+            </div>"""
 
-    # Input area
-    user_q = st.text_area("Your question", height=80, key="popup_chat_input",
-                          label_visibility="collapsed",
-                          placeholder="Ask anything about your process, model, or results...")
-    col_send, col_clear = st.columns([3,1])
+    if not st.session_state.global_chat:
+        chat_html = """
+        <div style="text-align:center;padding:40px 20px;color:#94A3B8">
+          <div style="font-size:32px;margin-bottom:12px">💬</div>
+          <div style="font-size:14px">Ask anything about your process, model, or analysis results.</div>
+          <div style="font-size:12px;margin-top:6px">The AI knows your current project state.</div>
+        </div>"""
+
+    # Scrollable chat area
+    st.markdown(
+        f"""<div style="
+            height:420px;overflow-y:auto;
+            border:1px solid #E2E8F0;border-radius:10px;
+            padding:16px;background:#FAFAFA;
+            margin-bottom:12px;
+        " id="chat-area">{chat_html}</div>""",
+        unsafe_allow_html=True
+    )
+
+    # Input row
+    col_input, col_send = st.columns([5, 1])
+    with col_input:
+        user_q = st.text_input(
+            "", key="popup_chat_input",
+            label_visibility="collapsed",
+            placeholder="Scrivi un messaggio...",
+        )
     with col_send:
-        if st.button("Send", key="popup_send", type="primary", use_container_width=True) \
-                and user_q.strip():
+        send = st.button("➤", key="popup_send", use_container_width=True, type="primary")
+
+    col_info, col_clear = st.columns([3,1])
+    with col_info:
+        st.caption(f"🌍 Language: {lang}  ·  ✨ AI: Gemini 2.5 Flash")
+    with col_clear:
+        if st.button("🗑️ Clear", key="popup_clear", use_container_width=True):
+            st.session_state.global_chat = []
+            st.rerun()
+
+    # Send on button click or Enter (text_input triggers rerun on Enter)
+    if (send or user_q) and user_q.strip():
+        # Only process if it's a new message (not already the last user message)
+        last_user = next((m['text'] for m in reversed(st.session_state.global_chat)
+                         if m['role']=='user'), None)
+        if user_q.strip() != last_user:
             history = "\n".join(
                 f"{'User' if m['role']=='user' else 'AI'}: {m['text']}"
                 for m in st.session_state.global_chat[-8:])
@@ -316,17 +431,14 @@ def chat_popup():
                 + f"=== PROJECT STATE ===\n{build_snapshot()}\n"
                 + (f"=== HISTORY ===\n{history}\n" if history else "")
                 + f"User: {user_q}\n"
-                + "Answer concisely and practically. Ask a follow-up question if needed."
+                + "Answer concisely and practically. "
+                  "Ask a follow-up question if you need more info."
             )
-            with st.spinner("Thinking..."):
+            with st.spinner("..."):
                 reply, model, err = call_ai(prompt)
-            if err: reply = f"Error: {err}"
-            st.session_state.global_chat.append({'role':'user','text':user_q})
-            st.session_state.global_chat.append({'role':'ai','text':reply or ""})
-            st.rerun()
-    with col_clear:
-        if st.button("Clear history", key="popup_clear", use_container_width=True):
-            st.session_state.global_chat = []
+            if err: reply = f"Errore: {err}"
+            st.session_state.global_chat.append({'role':'user', 'text': user_q})
+            st.session_state.global_chat.append({'role':'ai',   'text': reply or ""})
             st.rerun()
 
 
