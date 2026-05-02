@@ -88,36 +88,30 @@ def call_claude_haiku(prompt):
 
 def call_ai(prompt):
     """
-    Multi-model fallback:
-    1. Gemini 2.5 Flash  (free, highest quality)
-    2. Gemini 2.0 Flash  (free, different quota)
-    3. Claude Haiku      (paid, ~$0.001/call — only if both Gemini fail)
+    Multi-model fallback (cheapest/free first):
+    1. Gemini 2.5 Flash      (free, 10 RPM, 250 RPD)
+    2. Gemini 2.5 Flash-Lite (free, 15 RPM, 1000 RPD) ← higher daily quota
+    3. Claude Haiku           (paid, ~$0.001/call)
     Returns (text, model_used, error)
     """
-    RATE_LIMIT_CODES = ["429","quota","rate","limit","resource","exhausted","overload"]
+    RATE_CODES = ["429","quota","rate","limit","resource","exhausted","overload","unavailable"]
 
-    # 1 — Gemini 2.5 Flash
-    try:
-        txt = call_gemini_model(prompt, "gemini-2.5-flash")
-        return txt, "Gemini 2.5 Flash", None
-    except Exception as e:
-        e1 = str(e)
-        if not any(c in e1.lower() for c in RATE_LIMIT_CODES):
-            return None, None, f"Gemini 2.5 Flash error: {e1}"
+    for model_name, label in [
+        ("gemini-2.5-flash",      "Gemini 2.5 Flash"),
+        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
+    ]:
+        try:
+            txt = call_gemini_model(prompt, model_name)
+            return txt, label, None
+        except Exception as e:
+            if not any(c in str(e).lower() for c in RATE_CODES):
+                return None, None, f"{label} error: {e}"
+            # rate-limited → try next model
 
-    # 2 — Gemini 2.0 Flash
-    try:
-        txt = call_gemini_model(prompt, "gemini-2.0-flash")
-        return txt, "Gemini 2.0 Flash (fallback)", None
-    except Exception as e:
-        e2 = str(e)
-        if not any(c in e2.lower() for c in RATE_LIMIT_CODES):
-            return None, None, f"Gemini 2.0 Flash error: {e2}"
-
-    # 3 — Claude Haiku (paid)
+    # Final fallback: Claude Haiku (paid)
     try:
         txt = call_claude_haiku(prompt)
-        return txt, "Claude Haiku (fallback — paid)", None
+        return txt, "Claude Haiku (paid fallback)", None
     except Exception as e:
         return None, None, f"All models failed. Last error: {e}"
 
@@ -135,45 +129,6 @@ def llm_button(label, prompt, key):
                 unsafe_allow_html=True)
             st.caption(f"Powered by {model_used}")
 
-
-def open_chat(section_context, chat_key):
-    hist_key = f"chat_hist_{chat_key}"
-    if hist_key not in st.session_state:
-        st.session_state[hist_key] = []
-    with st.expander("💬 Ask AI about this section", expanded=False):
-        for msg in st.session_state[hist_key]:
-            cls = 'chat-user' if msg['role']=='user' else 'chat-ai'
-            icon = '🧑' if msg['role']=='user' else '🤖'
-            st.markdown(f"<div class='{cls}'>{icon} {msg['text']}</div>",
-                        unsafe_allow_html=True)
-        user_input = st.text_input("", key=f"chat_input_{chat_key}",
-                                   label_visibility="collapsed",
-                                   placeholder="Ask anything about this section...")
-        col_send, col_clear = st.columns([3,1])
-        with col_send:
-            if st.button("Send", key=f"chat_send_{chat_key}") and user_input.strip():
-                history_str = "\n".join(
-                    f"{'User' if m['role']=='user' else 'Assistant'}: {m['text']}"
-                    for m in st.session_state[hist_key][-6:]
-                )
-                full_prompt = (
-                    get_process_context() + "\n"
-                    + f"=== SECTION DATA ===\n{section_context}\n"
-                    + (f"=== HISTORY ===\n{history_str}\n" if history_str else "")
-                    + f"User: {user_input}\n"
-                    + "Answer concisely. If you need more info, ask one specific question."
-                )
-                with st.spinner("Thinking..."):
-                    reply, model_used, err = call_ai(full_prompt)
-                if err:
-                    reply = f"Error: {err}"
-                st.session_state[hist_key].append({'role':'user','text':user_input})
-                st.session_state[hist_key].append({'role':'ai','text':reply})
-                st.rerun()
-        with col_clear:
-            if st.button("Clear", key=f"chat_clear_{chat_key}"):
-                st.session_state[hist_key] = []
-                st.rerun()
 
 
 # ═══════════════════════════════════════════
@@ -468,37 +423,117 @@ def show_anomaly_table_and_contrib(model,T2_arr,Q_arr,Xs,E,T_arr,fn,table_key,pr
 # ═══════════════════════════════════════════
 for k,v in [('model',None),('feature_names',[]),('y_names',[]),
             ('df_X',None),('df_Y',None),('k_chosen',None),
-            ('mon',None),('mon_files',[]),   # list of dicts: {name, n_rows, mon}
+            ('mon',None),('mon_files',[]),
             ('anomaly_log',[]),
             ('rmsecv_computed',False),('rmsecv_result',None),
             ('process_context',''),('analysis_objective',''),('context_saved',False),
             ('split_method','Temporal'),('split_ratio',0.7),('split_row',None),
-            ('df_train',None),('df_test_builtin',None)]:
+            ('df_train',None),('df_test_builtin',None),
+            ('global_chat',[])]:   # single persistent chat
     if k not in st.session_state:
         st.session_state[k]=v
 
 
 # ═══════════════════════════════════════════
-#  SIDEBAR
+#  SIDEBAR — settings + global persistent chat
 # ═══════════════════════════════════════════
 with st.sidebar:
     st.markdown("# 🏭 Process Monitor")
     st.markdown("**PCA-SPC · Industrial Monitoring**")
     st.divider()
-    if st.session_state.context_saved and st.session_state.process_context:
-        st.markdown("**⚙️ Process context loaded ✅**")
-        obj=st.session_state.get('analysis_objective','')
-        if obj:
-            st.caption(f"Objective: {obj[:60]}{'...' if len(obj)>60 else ''}")
-        st.divider()
-    alpha=st.slider("UCL Confidence (α)",0.90,0.99,0.95,0.01)
-    y_cols_raw=st.text_area("Y Variables — one per line")
-    y_cols=[c.strip() for c in y_cols_raw.split('\n') if c.strip()]
-    excl_raw=st.text_area("Columns to exclude — one per line")
-    excl_cols=[c.strip() for c in excl_raw.split('\n') if c.strip()]
+
+    # Settings (collapsed to save space)
+    with st.expander("⚙️ Settings", expanded=False):
+        if st.session_state.context_saved and st.session_state.process_context:
+            st.markdown("**Process context loaded ✅**")
+            obj=st.session_state.get('analysis_objective','')
+            if obj:
+                st.caption(f"Objective: {obj[:60]}{'...' if len(obj)>60 else ''}")
+        alpha=st.slider("UCL Confidence (α)",0.90,0.99,0.95,0.01)
+        y_cols_raw=st.text_area("Y Variables — one per line")
+        y_cols=[c.strip() for c in y_cols_raw.split('\n') if c.strip()]
+        excl_raw=st.text_area("Columns to exclude — one per line")
+        excl_cols=[c.strip() for c in excl_raw.split('\n') if c.strip()]
+        st.caption("AI: Gemini 2.5 Flash → Flash-Lite → Claude Haiku")
+
     st.divider()
-    st.caption("AI fallback order: Gemini 2.5 Flash → Gemini 2.0 Flash → Claude Haiku")
-    st.caption("Add GEMINI_API_KEY (required) and ANTHROPIC_API_KEY (optional fallback) to Secrets.")
+
+    # ── Global AI Chat ────────────────────────────────────
+    st.markdown("### 💬 AI Assistant")
+    st.caption("Ask anything — the AI knows your process, model and monitoring results.")
+
+    # Build live project context for the chat
+    def build_project_snapshot():
+        """Compact snapshot of current app state — injected into every chat message."""
+        lines = []
+        if st.session_state.process_context:
+            lines.append(f"Process: {st.session_state.process_context[:200]}")
+        if st.session_state.analysis_objective:
+            lines.append(f"Objective: {st.session_state.analysis_objective}")
+        if st.session_state.df_X is not None:
+            fn = st.session_state.feature_names
+            lines.append(f"Dataset: {len(st.session_state.df_X)} cycles, "
+                         f"{len(fn)} X vars ({', '.join(fn[:6])}{'...' if len(fn)>6 else ''})")
+        if st.session_state.model is not None:
+            m = st.session_state.model
+            n_flag = int(((m['T2']>m['T2_UCL'])|(m['Q']>m['Q_UCL'])).sum())
+            lines.append(f"Model: k={m['k']} PCs, T²UCL={m['T2_UCL']:.3f}, "
+                         f"QUCL={m['Q_UCL']:.3f}, Phase I flags={n_flag}")
+        if st.session_state.mon_files:
+            all_t2f = np.concatenate([f['mon']['T2_flag'] for f in st.session_state.mon_files])
+            all_qf  = np.concatenate([f['mon']['Q_flag']  for f in st.session_state.mon_files])
+            n_any = int((all_t2f|all_qf).sum()); n_tot = len(all_t2f)
+            files = ", ".join(f['name'] for f in st.session_state.mon_files)
+            lines.append(f"Monitoring: {n_tot} cycles from [{files}], "
+                         f"{n_any} anomalies ({n_any/n_tot*100:.1f}%)")
+        if st.session_state.anomaly_log:
+            lines.append(f"Interventions logged: {len(st.session_state.anomaly_log)}")
+        return "\n".join(lines) if lines else "No data loaded yet."
+
+    # Render chat history
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.global_chat:
+            if msg['role'] == 'user':
+                st.markdown(f"<div class='chat-user'>🧑 {msg['text']}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='chat-ai'>🤖 {msg['text']}</div>",
+                            unsafe_allow_html=True)
+
+    # Input
+    user_q = st.text_input("", key="global_chat_input",
+                           label_visibility="collapsed",
+                           placeholder="Ask anything about your analysis...")
+
+    col_send, col_clear = st.columns([3,1])
+    with col_send:
+        if st.button("Send", key="global_chat_send", use_container_width=True) \
+                and user_q.strip():
+            snapshot = build_project_snapshot()
+            history_str = "\n".join(
+                f"{'User' if m['role']=='user' else 'AI'}: {m['text']}"
+                for m in st.session_state.global_chat[-8:]  # last 4 exchanges
+            )
+            full_prompt = (
+                get_process_context() + "\n"
+                + f"=== PROJECT STATE ===\n{snapshot}\n"
+                + (f"=== CHAT HISTORY ===\n{history_str}\n" if history_str else "")
+                + f"User: {user_q}\n"
+                + "Answer concisely and practically. "
+                  "If you need more information to answer well, ask one specific question."
+            )
+            with st.spinner("Thinking..."):
+                reply, model_used, err = call_ai(full_prompt)
+            if err:
+                reply = f"Error: {err}"
+            st.session_state.global_chat.append({'role':'user', 'text':user_q})
+            st.session_state.global_chat.append({'role':'ai',   'text':reply or ""})
+            st.rerun()
+    with col_clear:
+        if st.button("Clear", key="global_chat_clear", use_container_width=True):
+            st.session_state.global_chat = []
+            st.rerun()
 
 
 # ═══════════════════════════════════════════
@@ -559,7 +594,6 @@ with tab0:
             "Be specific. No generic statements."
         )
         llm_button("Generate process summary",prompt_ctx,key='ai_ctx')
-        open_chat("Process: "+st.session_state.process_context,chat_key='ctx')
 
 
 # ═══════════════════════════════════════════
@@ -668,26 +702,53 @@ with tab1:
 
         st.markdown("---")
         df_Xf2=df_X.fillna(df_X.mean())
-        desc_str=df_Xf2.describe().round(2).to_string()
-        corr=df_Xf2.corr().abs()
-        corr_np=corr.values.copy(); np.fill_diagonal(corr_np,0)
-        corr_f=pd.DataFrame(corr_np,index=corr.index,columns=corr.columns)
-        top_corr="\n".join(f"  {a}↔{b}: {v:.2f}"
-                           for (a,b),v in corr_f.unstack().nlargest(5).items())
+
+        # Compact but complete dataset summary for AI
+        desc2 = df_Xf2.describe().T
+        desc2['cv%'] = (desc2['std'] / desc2['mean'].abs() * 100).round(1)
+        desc2['range'] = (desc2['max'] - desc2['min']).round(3)
+        desc2['skew'] = df_Xf2.skew().round(2)
+
+        # Top 5 by CV%
+        top_cv = desc2.nlargest(5,'cv%')[['mean','std','cv%','min','max']].round(3)
+        top_cv_str = "\n".join(
+            f"  {v}: mean={r['mean']}, std={r['std']}, CV={r['cv%']}%, "
+            f"min={r['min']}, max={r['max']}"
+            for v,r in top_cv.iterrows()
+        )
+        # Variables with suspicious min or max (beyond 3 sigma)
+        outlier_vars = []
+        for v in df_Xf2.columns:
+            mu,s = df_Xf2[v].mean(), df_Xf2[v].std()
+            if s > 0:
+                if df_Xf2[v].min() < mu-4*s or df_Xf2[v].max() > mu+4*s:
+                    outlier_vars.append(f"{v}(min={df_Xf2[v].min():.2f}, max={df_Xf2[v].max():.2f})")
+        outlier_str = ", ".join(outlier_vars[:5]) if outlier_vars else "none"
+
+        miss_str = ", ".join(f"{c}:{n}" for c,n in df_X.isnull().sum().items() if n>0) or "none"
+
+        corr = df_Xf2.corr().abs()
+        corr_np = corr.values.copy(); np.fill_diagonal(corr_np, 0)
+        corr_f = pd.DataFrame(corr_np, index=corr.index, columns=corr.columns)
+        top_corr = ", ".join(f"{a}↔{b}:{v:.2f}"
+                             for (a,b),v in corr_f.unstack().nlargest(5).items())
+
         prompt_ds=(
-            f"Dataset: {len(df_X)} observations, {len(x_cols)} X variables, "
+            f"Dataset: {len(df_X)} obs, {len(x_cols)} X vars, "
             f"{len(y_valid)} Y ({', '.join(y_valid) if y_valid else 'none'}).\n"
-            f"Stats:\n{desc_str}\nTop correlations:\n{top_corr}\n\n"
+            f"Top 5 variables by variability (CV%):\n{top_cv_str}\n"
+            f"Possible outliers (beyond 4σ): {outlier_str}\n"
+            f"Missing values: {miss_str}\n"
+            f"Top correlations: {top_corr}\n\n"
             "5 bullet points:\n"
-            "• Data quality (missing, constants, outliers)\n"
-            "• Variables with high CV% — flag if unusual\n"
-            "• Key correlations for PCA\n"
+            "• Data quality issues (missing, outliers)\n"
+            "• Variables with unusual variability — is it expected for this process?\n"
+            "• Key correlations relevant for PCA\n"
             "• Any concern before modelling\n"
             "• One specific recommendation\n"
-            "Be direct. Reference specific variable names."
+            "Reference specific variable names. Be direct."
         )
-        llm_button("Analyse dataset",prompt_ds,key='ai_ds')
-        open_chat(f"Dataset: {len(df_X)} obs, {len(x_cols)} X vars.",chat_key='ds')
+        llm_button("Analyse dataset", prompt_ds, key='ai_ds')
 
 
 # ═══════════════════════════════════════════
@@ -789,16 +850,13 @@ with tab2:
         st.success(f"✅ k = **{k_chosen}** PCs — explained variance: **{cum[k_chosen-1]:.1f}%**")
         st.markdown("---")
         prompt_pc=(
-            f"PCA on {n_obs} obs, {n_vars} variables.\n"
-            f"Kaiser: k={k_kaiser}, 90%: k={k_90}, 95%: k={k_95}.\n"
-            f"User selected: k={k_chosen} ({cum[k_chosen-1]:.1f}% variance).\n\n"
-            "3 bullet points:\n"
-            "• Is this k appropriate for the process described?\n"
-            "• What phenomena do the first PCs likely represent?\n"
-            "• Any concern with this choice?"
+            f"PCA: {n_obs} obs, {n_vars} vars. "
+            f"Kaiser k={k_kaiser}, 90%→k={k_90}, 95%→k={k_95}. "
+            f"Selected: k={k_chosen} ({cum[k_chosen-1]:.1f}% var).\n"
+            "3 bullets: (1) Is k appropriate? (2) What phenomena do first PCs capture? "
+            "(3) Any concern? Be specific."
         )
         llm_button("Interpret PC selection",prompt_pc,key='ai_pc')
-        open_chat(f"k={k_chosen}, {n_vars} vars",chat_key='pc')
 
 
 # ═══════════════════════════════════════════
@@ -883,31 +941,22 @@ with tab3:
                 st.markdown("---")
                 v_t2=[x_cols[i] for i in top_t2_p1]; v_q=[x_cols[i] for i in top_q_p1]
                 prompt_p1=(
-                    f"Phase I anomalous cycle {obs_p1}: "
-                    f"T²={t2_p1:.3f} ({t2_p1/mdl['T2_UCL']:.2f}×UCL), "
-                    f"Q={q_p1:.3f} ({q_p1/mdl['Q_UCL']:.2f}×UCL).\n"
-                    f"Top T² vars: {', '.join(v_t2)}. Top Q vars: {', '.join(v_q)}.\n\n"
-                    "3 bullet points:\n"
-                    "• Should this cycle be removed? Why?\n"
-                    "• What does it suggest about process conditions?\n"
-                    "• Recommended action"
+                    f"Phase I outlier {obs_p1}: T²={t2_p1:.2f}×UCL, Q={q_p1:.2f}×UCL. "
+                    f"T² vars: {', '.join(v_t2)}. Q vars: {', '.join(v_q)}.\n"
+                    "3 bullets: (1) Remove it? (2) What does it suggest? (3) Action."
                 )
                 llm_button("Interpret Phase I anomaly",prompt_p1,key=f'ai_p1_{obs_p1}')
             else:
                 st.success("✅ No anomalies in training set — clean calibration.")
             st.markdown("---")
             prompt_cal=(
-                f"Model: {len(mdl['T2'])} cycles, k={mdl['k']} PCs, "
-                f"T²UCL={mdl['T2_UCL']:.3f}, QUCL={mdl['Q_UCL']:.3f}, α={alpha}.\n"
-                f"Flags: {n_flag} ({pct_f:.1f}%).\n\n"
-                "3 bullet points:\n"
-                "• Are the UCL values reasonable?\n"
-                "• Are the residual flags acceptable?\n"
-                "• Is the model ready for Phase II?"
+                f"Phase I model: {len(mdl['T2'])} cycles, k={mdl['k']} PCs, "
+                f"T²UCL={mdl['T2_UCL']:.3f}, QUCL={mdl['Q_UCL']:.3f}, "
+                f"α={alpha}, flags={n_flag} ({pct_f:.1f}%).\n"
+                "3 bullets: (1) UCL values reasonable? (2) Flags acceptable? "
+                "(3) Ready for Phase II? Be specific."
             )
             llm_button("Interpret calibration model",prompt_cal,key='ai_cal')
-            open_chat(f"k={mdl['k']} PCs, T²UCL={mdl['T2_UCL']:.3f}, flags={n_flag}",
-                      chat_key='cal')
 
 
 # ═══════════════════════════════════════════
@@ -952,16 +1001,12 @@ with tab4:
         top_str=", ".join(f"{fn[i]}({P[i,pc_i]:.3f}/{P[i,pc_j]:.3f})" for i in top5)
         prompt_load=(
             f"{'Loading' if tipo=='Loading plot' else 'Score'} plot "
-            f"PC{pc_i+1} ({evr_m[pc_i]:.1f}%) vs PC{pc_j+1} ({evr_m[pc_j]:.1f}%).\n"
-            f"Top variables: {top_str}.\n\n"
-            "3 bullet points:\n"
-            "• What process phenomena do these PCs represent?\n"
-            "• What do the most influential variables tell us?\n"
-            "• Any notable correlation pattern?"
+            f"PC{pc_i+1} ({evr_m[pc_i]:.1f}%) vs PC{pc_j+1} ({evr_m[pc_j]:.1f}%). "
+            f"Top vars: {top_str}.\n"
+            "3 bullets: (1) What phenomena do these PCs represent? "
+            "(2) What do top vars tell us? (3) Notable correlations?"
         )
         llm_button("Interpret chart",prompt_load,key='ai_load')
-        open_chat(f"{'Loading' if tipo=='Loading plot' else 'Score'} plot "
-                  f"PC{pc_i+1} vs PC{pc_j+1}",chat_key='load')
 
 
 # ═══════════════════════════════════════════
@@ -1096,19 +1141,12 @@ with tab5:
                 st.markdown("---")
                 v_t2=[fn[i] for i in top_t2]; v_q=[fn[i] for i in top_q]
                 prompt_an=(
-                    f"Anomalous cycle {obs} (from {file_of_obs}): "
-                    f"T²={t2_obs:.3f} ({t2_obs/mdl['T2_UCL']:.2f}×UCL), "
-                    f"Q={q_obs:.3f} ({q_obs/mdl['Q_UCL']:.2f}×UCL).\n"
-                    f"T² driven by: {', '.join(v_t2)}. Q driven by: {', '.join(v_q)}.\n\n"
-                    "3 bullet points for the shift supervisor:\n"
-                    "• What is happening physically?\n"
-                    "• Most likely cause (reference variables)\n"
-                    "• Immediate action\n"
-                    "No statistics. Plain language."
+                    f"Anomaly cycle {obs}: T²={t2_obs:.2f}×UCL, Q={q_obs:.2f}×UCL. "
+                    f"T² vars: {', '.join(v_t2)}. Q vars: {', '.join(v_q)}.\n"
+                    "3 bullets for supervisor: (1) What is happening physically? "
+                    "(2) Most likely cause? (3) Immediate action? No statistics."
                 )
                 llm_button("Explain anomaly to technician",prompt_an,key=f'ai_an_{obs}')
-                open_chat(f"Cycle {obs} from {file_of_obs}: T²={t2_obs:.3f}, Q={q_obs:.3f}. "
-                          f"T² vars: {', '.join(v_t2)}",chat_key=f'mon_{obs}')
                 st.markdown("#### 📝 Log Intervention")
                 with st.form(f"log_{obs}"):
                     azione=st.text_area("Corrective action taken",height=70)
@@ -1232,8 +1270,6 @@ with tab6:
                 )
                 llm_button("Generate Root Cause Analysis & Action Plan",
                            prompt_rc,key='ai_rootcause')
-                open_chat(f"{n_any}/{n_test} anomalies. Top vars: {', '.join(top_overall)}",
-                          chat_key='summary')
             else:
                 st.markdown("<div class='ok-box'>✅ No anomalies — process is stable.</div>",
                             unsafe_allow_html=True)
