@@ -537,9 +537,78 @@ with st.sidebar:
 
 
 # ═══════════════════════════════════════════
-#  TABS
+#  WORKFLOW DETECTION
 # ═══════════════════════════════════════════
+
+def get_workflow():
+    """
+    Returns 'spc', 'diagnostic', or 'exploratory' based on saved objective.
+    Defaults to 'spc' if context not saved yet.
+    """
+    obj = st.session_state.get('analysis_objective', '').lower()
+    if 'diagnostic' in obj:
+        return 'diagnostic'
+    if 'exploratory' in obj:
+        return 'exploratory'
+    return 'spc'
+
+
+WORKFLOW_LABELS = {
+    'spc':         ('🔵 SPC',         '#2980b9', 'Statistical Process Control'),
+    'diagnostic':  ('🟠 Diagnostics', '#e67e22', 'Diagnostics & Root Cause'),
+    'exploratory': ('🟢 Exploratory', '#27ae60', 'Exploratory Analysis'),
+}
+
+WORKFLOW_TAB_GUIDE = {
+    'spc': {
+        'Dataset':         '1 · Load data and optionally split train/test',
+        'PC Selection':    '2 · Choose number of PCs',
+        'Calibration':     '3 · Build Phase I model on train set',
+        'Loadings/Scores': '4 · Explore model structure',
+        'Monitoring':      '5 · Upload new production data → detect anomalies',
+        'Summary':         '6 · Root cause analysis on Phase II anomalies',
+    },
+    'diagnostic': {
+        'Dataset':         '1 · Load the full historical dataset',
+        'PC Selection':    '2 · Choose number of PCs',
+        'Calibration':     '3 · Fit model on full dataset — anomalies = internal flags',
+        'Loadings/Scores': '4 · Explore variable structure',
+        'Monitoring':      '— Not needed (data already in Calibration)',
+        'Summary':         '5 · Root cause analysis on internal anomalies',
+    },
+    'exploratory': {
+        'Dataset':         '1 · Load dataset and explore statistics',
+        'PC Selection':    '2 · Choose number of PCs',
+        'Calibration':     '3 · Fit model to explore structure',
+        'Loadings/Scores': '4 · Main section — loading and score plots',
+        'Monitoring':      '— Optional',
+        'Summary':         '5 · Variable patterns and correlations',
+    },
+}
+
+
 st.markdown("# 🏭 Process Monitor")
+
+# Workflow banner
+wf = get_workflow()
+wf_label, wf_color, wf_name = WORKFLOW_LABELS[wf]
+st.markdown(
+    f"<div style='background:{wf_color}22;border:1px solid {wf_color}55;"
+    f"border-left:5px solid {wf_color};padding:10px 16px;border-radius:6px;"
+    f"margin-bottom:12px;font-size:13px;'>"
+    f"<strong>{wf_label} — {wf_name}</strong>"
+    + (f" &nbsp;·&nbsp; Set in Process Context tab"
+       if st.session_state.context_saved
+       else " &nbsp;·&nbsp; ⚙️ Set your objective in the Process Context tab to activate the guided workflow")
+    + "</div>",
+    unsafe_allow_html=True
+)
+if st.session_state.context_saved:
+    with st.expander("📋 Workflow guide for this objective", expanded=False):
+        for tab_name, step in WORKFLOW_TAB_GUIDE[wf].items():
+            icon = "⏭️" if step.startswith("—") else "✅"
+            st.markdown(f"{icon} **{tab_name}** — {step}")
+
 tab0,tab1,tab2,tab3,tab4,tab5,tab6=st.tabs([
     "⚙️ Process Context","📂 Dataset","📐 PC Selection",
     "🔧 Calibration","📊 Loadings & Scores","🔍 Monitoring",
@@ -640,65 +709,72 @@ with tab1:
         if miss>0:
             st.warning("Missing values detected — will be replaced with column mean.")
 
-        # ── TRAIN / TEST SPLIT ─────────────────────────
+        # ── TRAIN / TEST SPLIT — only for SPC workflow ─────
         st.markdown("---")
-        st.markdown("#### Train / Test Split")
-        st.caption("Split the dataset into Phase I (calibration) and Phase II (test). "
-                   "If you prefer to use separate files for monitoring, skip this section.")
-
-        split_method=st.radio("Split method",["Temporal","Random"],
-                               horizontal=True,key='split_radio')
-        st.session_state.split_method=split_method
-
-        n_total=len(df_X)
-        if split_method=="Temporal":
-            split_ratio=st.slider("Train size (%)",50,90,70,5,key='split_ratio_slider')
-            st.session_state.split_ratio=split_ratio/100
-            split_row=int(n_total*(split_ratio/100))
-            st.session_state.split_row=split_row
-            st.info(f"Train: first **{split_row}** cycles | Test: last **{n_total-split_row}** cycles")
-            # Preview chart
-            fig_split=go.Figure()
-            fig_split.add_vrect(x0=0,x1=split_row,fillcolor='#2980b9',opacity=0.12,
-                                line_width=0,annotation_text=f'Train ({split_row})',
-                                annotation_position='top left',annotation_font_size=10)
-            fig_split.add_vrect(x0=split_row,x1=n_total,fillcolor='#e74c3c',opacity=0.12,
-                                line_width=0,annotation_text=f'Test ({n_total-split_row})',
-                                annotation_position='top right',annotation_font_size=10)
-            fig_split.add_vline(x=split_row,line_dash='dash',line_color='#e74c3c',line_width=2)
-            first_col=x_cols[0]
-            fig_split.add_scatter(x=list(range(n_total)),
-                                  y=df_X[first_col].fillna(df_X[first_col].mean()).tolist(),
-                                  mode='lines',line=dict(color='#2c3e50',width=1),
-                                  name=first_col)
-            fig_split.update_layout(height=200,margin=dict(l=10,r=10,t=10,b=30),
-                                    plot_bgcolor='#fafafa',paper_bgcolor='white',
-                                    showlegend=False,xaxis_title='Cycle')
-            st.plotly_chart(fig_split,use_container_width=True,key='split_preview')
-
-        else:  # Random
-            split_ratio=st.slider("Train size (%)",50,90,70,5,key='split_ratio_slider_r')
-            st.session_state.split_ratio=split_ratio/100
-            split_row=int(n_total*(split_ratio/100))
-            st.session_state.split_row=split_row
-            st.info(f"Train: **{split_row}** random cycles | Test: **{n_total-split_row}** random cycles")
-
-        if st.button("Apply split",key='btn_split',type='primary'):
-            df_Xf=df_X.fillna(df_X.mean())
+        wf_ds = get_workflow()
+        if wf_ds == 'spc':
+            st.markdown("#### Train / Test Split")
+            st.caption("Split into Phase I (calibration) and Phase II (test). "
+                       "Skip if you prefer to upload separate monitoring files.")
+            split_method=st.radio("Split method",["Temporal","Random"],
+                                   horizontal=True,key='split_radio')
+            st.session_state.split_method=split_method
+            n_total=len(df_X)
             if split_method=="Temporal":
-                sr=st.session_state.split_row
-                df_tr=df_Xf.iloc[:sr].reset_index(drop=True)
-                df_te=df_Xf.iloc[sr:].reset_index(drop=True)
+                split_ratio=st.slider("Train size (%)",50,90,70,5,key='split_ratio_slider')
+                st.session_state.split_ratio=split_ratio/100
+                split_row=int(n_total*(split_ratio/100))
+                st.session_state.split_row=split_row
+                st.info(f"Train: first **{split_row}** cycles | Test: last **{n_total-split_row}** cycles")
+                fig_split=go.Figure()
+                fig_split.add_vrect(x0=0,x1=split_row,fillcolor='#2980b9',opacity=0.12,
+                                    line_width=0,annotation_text=f'Train ({split_row})',
+                                    annotation_position='top left',annotation_font_size=10)
+                fig_split.add_vrect(x0=split_row,x1=n_total,fillcolor='#e74c3c',opacity=0.12,
+                                    line_width=0,annotation_text=f'Test ({n_total-split_row})',
+                                    annotation_position='top right',annotation_font_size=10)
+                fig_split.add_vline(x=split_row,line_dash='dash',line_color='#e74c3c',line_width=2)
+                first_col=x_cols[0]
+                fig_split.add_scatter(x=list(range(n_total)),
+                                      y=df_X[first_col].fillna(df_X[first_col].mean()).tolist(),
+                                      mode='lines',line=dict(color='#2c3e50',width=1),
+                                      name=first_col)
+                fig_split.update_layout(height=200,margin=dict(l=10,r=10,t=10,b=30),
+                                        plot_bgcolor='#fafafa',paper_bgcolor='white',
+                                        showlegend=False,xaxis_title='Cycle')
+                st.plotly_chart(fig_split,use_container_width=True,key='split_preview')
             else:
-                rng=np.random.default_rng(42)
-                idx=rng.permutation(n_total)
-                sr=st.session_state.split_row
-                df_tr=df_Xf.iloc[idx[:sr]].reset_index(drop=True)
-                df_te=df_Xf.iloc[idx[sr:]].reset_index(drop=True)
-            st.session_state.df_train=df_tr
-            st.session_state.df_test_builtin=df_te
-            st.session_state.split_applied=True
-            st.success(f"✅ Split applied — Train: {len(df_tr)} | Test: {len(df_te)}")
+                split_ratio=st.slider("Train size (%)",50,90,70,5,key='split_ratio_slider_r')
+                st.session_state.split_ratio=split_ratio/100
+                split_row=int(n_total*(split_ratio/100))
+                st.session_state.split_row=split_row
+                st.info(f"Train: **{split_row}** random cycles | Test: **{n_total-split_row}** random cycles")
+            if st.button("Apply split",key='btn_split',type='primary'):
+                df_Xf=df_X.fillna(df_X.mean())
+                if split_method=="Temporal":
+                    sr=st.session_state.split_row
+                    df_tr=df_Xf.iloc[:sr].reset_index(drop=True)
+                    df_te=df_Xf.iloc[sr:].reset_index(drop=True)
+                else:
+                    rng=np.random.default_rng(42)
+                    idx=rng.permutation(len(df_Xf))
+                    sr=st.session_state.split_row
+                    df_tr=df_Xf.iloc[idx[:sr]].reset_index(drop=True)
+                    df_te=df_Xf.iloc[idx[sr:]].reset_index(drop=True)
+                st.session_state.df_train=df_tr
+                st.session_state.df_test_builtin=df_te
+                st.success(f"✅ Split applied — Train: {len(df_tr)} | Test: {len(df_te)}")
+        else:
+            # Diagnostic / Exploratory — use full dataset, no split needed
+            st.markdown(
+                f"<div class='ok-box'>"
+                f"ℹ️ <strong>{WORKFLOW_LABELS[wf_ds][2]}</strong> workflow — "
+                f"train/test split not required. "
+                f"The full dataset will be used for calibration.</div>",
+                unsafe_allow_html=True)
+            # Clear any previous split so calibration uses full data
+            st.session_state.df_train = None
+            st.session_state.df_test_builtin = None
 
         st.markdown("---")
         df_Xf2=df_X.fillna(df_X.mean())
@@ -1017,8 +1093,23 @@ with tab5:
         st.info("⬆️ Build the model first.")
     else:
         mdl=st.session_state.model; fn=mdl['feature_names']
+        wf_mon = get_workflow()
 
-        st.markdown("### Load Monitoring Files")
+        # In diagnostic/exploratory — redirect to Calibration Phase I results
+        if wf_mon in ('diagnostic', 'exploratory'):
+            st.markdown(
+                f"<div class='ctx-box'>"
+                f"<strong>ℹ️ {WORKFLOW_LABELS[wf_mon][2]} workflow</strong><br>"
+                f"In this workflow the anomalies are already identified in the "
+                f"<strong>Calibration</strong> tab (Phase I flags). "
+                f"Go to <strong>Summary & Root Cause</strong> to see the full analysis.<br><br>"
+                f"You can still upload additional files here if you want to compare "
+                f"a second dataset against the same model."
+                f"</div>",
+                unsafe_allow_html=True
+            )
+            st.markdown("---")
+            st.markdown("#### Optional: compare additional files against this model")
         st.caption("Upload one or more files. Each file is added to the monitoring session "
                    "without overwriting the others. Data is concatenated chronologically.")
 
@@ -1172,6 +1263,8 @@ with tab6:
         st.info("⬆️ Build the calibration model first.")
     else:
         mdl=st.session_state.model; fn=mdl['feature_names']
+        wf_sum = get_workflow()
+
         st.markdown("#### Model summary")
         s1,s2,s3,s4=st.columns(4)
         s1.metric("k PCs",mdl['k'])
@@ -1180,21 +1273,41 @@ with tab6:
         n_flag_p1=int(((mdl['T2']>mdl['T2_UCL'])|(mdl['Q']>mdl['Q_UCL'])).sum())
         s4.metric("Phase I flags",f"{n_flag_p1} ({n_flag_p1/len(mdl['T2'])*100:.1f}%)")
 
-        if not st.session_state.mon_files:
-            st.info("⬆️ Load Phase II data in the Monitoring tab.")
+        # For diagnostic/exploratory: use Phase I data directly
+        # For spc: require Phase II monitoring data
+        if wf_sum in ('diagnostic', 'exploratory'):
+            # Use Phase I flags as the anomaly source
+            all_t2   = mdl['T2'];        all_q   = mdl['Q']
+            all_t2f  = mdl['T2']>mdl['T2_UCL']
+            all_qf   = mdl['Q'] >mdl['Q_UCL']
+            all_Xns  = mdl['X_scaled'];  all_En  = mdl['E']
+            all_Tn   = mdl['scores']
+            source_label = "Phase I (full dataset)"
+            st.markdown(
+                f"<div class='ctx-box'>ℹ️ <strong>{WORKFLOW_LABELS[wf_sum][2]}</strong> — "
+                f"showing anomalies from Phase I calibration on the full dataset.</div>",
+                unsafe_allow_html=True)
+        elif st.session_state.mon_files:
+            all_t2  = np.concatenate([f['mon']['T2']       for f in st.session_state.mon_files])
+            all_q   = np.concatenate([f['mon']['Q']        for f in st.session_state.mon_files])
+            all_t2f = np.concatenate([f['mon']['T2_flag']  for f in st.session_state.mon_files])
+            all_qf  = np.concatenate([f['mon']['Q_flag']   for f in st.session_state.mon_files])
+            all_Xns = np.concatenate([f['mon']['Xn_s']     for f in st.session_state.mon_files])
+            all_En  = np.concatenate([f['mon']['En']       for f in st.session_state.mon_files])
+            all_Tn  = np.concatenate([f['mon']['Tn']       for f in st.session_state.mon_files])
+            source_label = "Phase II monitoring"
         else:
-            all_t2=np.concatenate([f['mon']['T2']      for f in st.session_state.mon_files])
-            all_q =np.concatenate([f['mon']['Q']       for f in st.session_state.mon_files])
-            all_t2f=np.concatenate([f['mon']['T2_flag']for f in st.session_state.mon_files])
-            all_qf =np.concatenate([f['mon']['Q_flag'] for f in st.session_state.mon_files])
-            all_Xns=np.concatenate([f['mon']['Xn_s']   for f in st.session_state.mon_files])
-            all_En =np.concatenate([f['mon']['En']      for f in st.session_state.mon_files])
-            all_Tn =np.concatenate([f['mon']['Tn']      for f in st.session_state.mon_files])
+            st.info("⬆️ Load Phase II monitoring data in the Monitoring tab.")
+            st.stop()
+            all_t2=all_q=all_t2f=all_qf=all_Xns=all_En=all_Tn=None
+            source_label=""
+
+        if all_t2 is not None:
             n_test=len(all_t2); n_t2=int(all_t2f.sum()); n_q=int(all_qf.sum())
             n_any=int((all_t2f|all_qf).sum()); pct=n_any/n_test*100
             stato=("🟢 STABLE" if pct<5 else "🟡 WARNING" if pct<15 else "🔴 ANOMALIES")
 
-            st.markdown("#### Phase II results")
+            st.markdown(f"#### Analysis results — {source_label}")
             m1,m2,m3,m4=st.columns(4)
             m1.metric("Total cycles",n_test)
             m2.metric("T² anomalies",f"{n_t2} ({n_t2/n_test*100:.1f}%)")
