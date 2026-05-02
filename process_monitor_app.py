@@ -282,31 +282,47 @@ def chart_contribution(contrib, ucl_v, lcl_v, fn, title):
     return fig,exceed
 
 
-def chart_score(T,lam,T2_UCL,evr,pc_i,pc_j,flagged):
-    ang=np.linspace(0,2*np.pi,400)
-    a=np.sqrt(T2_UCL*lam[pc_i]); b=np.sqrt(T2_UCL*lam[pc_j]); ok=~flagged
-    fig=go.Figure()
-    fig.add_scatter(x=T[ok,pc_i].tolist(),y=T[ok,pc_j].tolist(),mode='markers',
-                    marker=dict(size=5,color='#2c3e50',opacity=0.6),name='In control',
+def chart_score(T, lam, T2_UCL_global, evr, pc_i, pc_j, flagged, alpha=0.95, n_train=None):
+    """
+    Score plot PC_i vs PC_j with correct bivariate confidence ellipse.
+    The ellipse is based on the 2D F-distribution limit (k=2),
+    not the global T² UCL (k=all PCs).
+    """
+    ang = np.linspace(0, 2*np.pi, 400)
+
+    # Correct 2D confidence limit for the score plot
+    # Uses k=2 (only the two displayed PCs) and the actual training set size
+    n = n_train if n_train is not None else max(T.shape[0], 10)
+    T2_UCL_2d = (2*(n-1)/(n-2)) * f.ppf(alpha, 2, n-2)
+    a = np.sqrt(lam[pc_i] * T2_UCL_2d)
+    b = np.sqrt(lam[pc_j] * T2_UCL_2d)
+
+    ok = ~flagged
+    fig = go.Figure()
+    fig.add_scatter(x=T[ok,pc_i].tolist(), y=T[ok,pc_j].tolist(), mode='markers',
+                    marker=dict(size=5, color='#2c3e50', opacity=0.6), name='In control',
                     hovertemplate=f'PC{pc_i+1}:%{{x:.3f}}<br>PC{pc_j+1}:%{{y:.3f}}<extra></extra>')
     if flagged.any():
-        fi=np.where(flagged)[0]
-        fig.add_scatter(x=T[fi,pc_i].tolist(),y=T[fi,pc_j].tolist(),mode='markers',
-                        marker=dict(size=9,color='#e74c3c',symbol='x',line=dict(width=2)),
+        fi = np.where(flagged)[0]
+        fig.add_scatter(x=T[fi,pc_i].tolist(), y=T[fi,pc_j].tolist(), mode='markers',
+                        marker=dict(size=9, color='#e74c3c', symbol='x', line=dict(width=2)),
                         name='Anomaly',
                         hovertemplate=f'PC{pc_i+1}:%{{x:.3f}}<br>PC{pc_j+1}:%{{y:.3f}}<extra></extra>')
-    fig.add_scatter(x=(a*np.cos(ang)).tolist(),y=(b*np.sin(ang)).tolist(),
-                    mode='lines',line=dict(color='#95a5a6',dash='dash',width=1.2),
-                    name='T² UCL ellipse',hoverinfo='skip')
-    fig.add_hline(y=0,line_color='#ecf0f1',line_width=0.8)
-    fig.add_vline(x=0,line_color='#ecf0f1',line_width=0.8)
+    fig.add_scatter(x=(a*np.cos(ang)).tolist(), y=(b*np.sin(ang)).tolist(),
+                    mode='lines', line=dict(color='#e74c3c', dash='dash', width=1.5),
+                    name=f'{int(alpha*100)}% confidence ellipse', hoverinfo='skip')
+    fig.add_hline(y=0, line_color='#ecf0f1', line_width=0.8)
+    fig.add_vline(x=0, line_color='#ecf0f1', line_width=0.8)
     fig.update_layout(
-        title=dict(text=f'Score plot PC{pc_i+1} ({evr[pc_i]:.1f}%) vs PC{pc_j+1} ({evr[pc_j]:.1f}%)',
-                   font=dict(family='IBM Plex Mono',size=12)),
-        xaxis_title=f'PC{pc_i+1}',yaxis_title=f'PC{pc_j+1}',
-        height=380,margin=dict(l=10,r=10,t=40,b=30),
-        plot_bgcolor='#fafafa',paper_bgcolor='white',
-        font=dict(family='IBM Plex Sans'),legend=dict(orientation='h',y=-0.2))
+        title=dict(
+            text=(f'Score plot  PC{pc_i+1} ({evr[pc_i]:.1f}%) vs PC{pc_j+1} ({evr[pc_j]:.1f}%)'
+                  f'  —  {int(alpha*100)}% confidence ellipse'),
+            font=dict(family='IBM Plex Mono', size=12)),
+        xaxis_title=f'PC{pc_i+1} ({evr[pc_i]:.1f}%)',
+        yaxis_title=f'PC{pc_j+1} ({evr[pc_j]:.1f}%)',
+        height=420, margin=dict(l=10,r=10,t=50,b=30),
+        plot_bgcolor='#fafafa', paper_bgcolor='white',
+        font=dict(family='IBM Plex Sans'), legend=dict(orientation='h', y=-0.2))
     return fig
 
 
@@ -1069,9 +1085,16 @@ with tab4:
             }).sort_values('Distance',ascending=False)
             st.dataframe(df_load,use_container_width=True,hide_index=True)
         else:
-            st.plotly_chart(chart_score(T_m,lam_m,mdl['T2_UCL'],evr_m,pc_i,pc_j,flag_m),
+            st.plotly_chart(chart_score(T_m, lam_m, mdl['T2_UCL'], evr_m,
+                                        pc_i, pc_j, flag_m,
+                                        alpha=alpha,
+                                        n_train=len(T_m)),
                             use_container_width=True,key='score_chart')
-            st.caption(f"Red dots: {int(flag_m.sum())} anomalies out of {len(T_m)}")
+            st.caption(
+                f"Red dots: {int(flag_m.sum())} anomalies out of {len(T_m)}. "
+                f"Ellipse = {int(alpha*100)}% bivariate confidence limit "
+                f"(F distribution, k=2, n={len(T_m)})."
+            )
         st.markdown("---")
         top5=np.argsort(np.sqrt(P[:,pc_i]**2+P[:,pc_j]**2))[::-1][:5]
         top_str=", ".join(f"{fn[i]}({P[i,pc_i]:.3f}/{P[i,pc_j]:.3f})" for i in top5)
