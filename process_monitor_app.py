@@ -1017,7 +1017,6 @@ with tab1:
         if miss>0:
             box("⚠️ Missing values detected — will be imputed with column mean.","warn")
 
-        # Train/test split — SPC only
         st.markdown("---")
         wf_ds=get_workflow()
         if wf_ds=='spc':
@@ -1026,28 +1025,39 @@ with tab1:
                                    horizontal=True,key='split_radio')
             n_total=len(df_X)
             sr_key='split_ratio_slider' if split_method=="Temporal" else 'split_ratio_slider_r'
-            split_ratio=st.slider("Train size (%)",50,90,70,5,key=sr_key)
+            split_ratio=st.slider("Train size (%)", 5, 95, 70, 1, key=sr_key)
             split_row=int(n_total*(split_ratio/100))
-            st.info(f"Train: **{split_row}** cycles | Test: **{n_total-split_row}** cycles")
+            st.info(f"Train: **{split_row}** observations ({split_ratio}%) | "
+                    f"Test: **{n_total-split_row}** observations ({100-split_ratio}%)")
             if split_method=="Temporal":
+                fc=x_cols[0]
                 fig_s=go.Figure()
                 fig_s.add_vrect(x0=0,x1=split_row,fillcolor=COLORS['primary'],opacity=0.08,
-                                line_width=0,annotation_text=f'Train',
+                                line_width=0,annotation_text=f'Train ({split_ratio}%)',
                                 annotation_position='top left',annotation_font_size=9)
                 fig_s.add_vrect(x0=split_row,x1=n_total,fillcolor=COLORS['danger'],opacity=0.08,
-                                line_width=0,annotation_text=f'Test',
+                                line_width=0,annotation_text=f'Test ({100-split_ratio}%)',
                                 annotation_position='top right',annotation_font_size=9)
                 fig_s.add_vline(x=split_row,line_dash='dash',line_color=COLORS['danger'],line_width=1.5)
-                fc=x_cols[0]
                 fig_s.add_scatter(x=list(range(n_total)),
                                   y=df_X[fc].fillna(df_X[fc].mean()).tolist(),
                                   mode='lines',line=dict(color=COLORS['neutral'],width=1),name=fc)
-                fig_s.update_layout(height=180,margin=dict(l=10,r=10,t=10,b=30),
-                                    plot_bgcolor=COLORS['surface'],paper_bgcolor=COLORS['white'],
-                                    showlegend=False,xaxis_title='Cycle',
-                                    xaxis=dict(gridcolor=COLORS['border']),
-                                    yaxis=dict(gridcolor=COLORS['border']))
+                fig_s.update_layout(
+                    title=dict(text=f'Split preview — variable: {fc}',
+                               font=dict(family='Inter',size=11,color=COLORS['muted'])),
+                    height=200,margin=dict(l=10,r=10,t=30,b=30),
+                    plot_bgcolor=COLORS['surface'],paper_bgcolor=COLORS['white'],
+                    showlegend=False,xaxis_title='Observation index',
+                    xaxis=dict(gridcolor=COLORS['border']),
+                    yaxis=dict(gridcolor=COLORS['border'],title=fc))
                 st.plotly_chart(fig_s,use_container_width=True,key='split_preview')
+                st.caption(
+                    f"🔵 Blue region = **train set** ({split_row} observations) — "
+                    f"used to calibrate the PCA-SPC model (Phase I). "
+                    f"🔴 Red region = **test set** ({n_total-split_row} observations) — "
+                    f"used to validate the model in Monitoring (Phase II). "
+                    f"The line shows the first process variable ({fc}) to visualise where the split falls."
+                )
             if st.button("Apply split",key='btn_split',type='primary'):
                 df_Xf=df_X.fillna(df_X.mean())
                 if split_method=="Temporal":
