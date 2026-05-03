@@ -313,7 +313,7 @@ def call_ai(prompt):
 
 def llm_button(label, prompt, key):
     if st.button(f"✨ {label}", key=key):
-        with st.spinner("Analisi AI in corso..."):
+        with st.spinner("Generating AI analysis..."):
             txt, model, err = call_ai(get_process_context() + "\n" + prompt)
         if err:
             st.error(f"AI error: {err}")
@@ -434,7 +434,7 @@ def chat_popup():
                 + "Answer concisely and practically. "
                   "Ask a follow-up question if you need more info."
             )
-            with st.spinner("..."):
+            with st.spinner("Generating response..."):
                 reply, model, err = call_ai(prompt)
             if err: reply = f"Errore: {err}"
             st.session_state.global_chat.append({'role':'user', 'text': user_q})
@@ -760,6 +760,8 @@ def show_anomaly_table_and_contrib(model,T2_arr,Q_arr,Xs,E,T_arr,fn,table_key,pr
         box("✅ No anomalies detected — process in control.","ok")
         return None
     st.caption(f"{len(flagged_idx)} out-of-control observations — click a row to analyse it.")
+    st.caption("💡 **Severity×UCL** = max(T²/UCL, Q/UCL) — how far above the control limit. "
+               "1.0 = just outside | 2.0 = twice the limit | 5.0+ = severe anomaly.")
     df_anom=pd.DataFrame({
         'Cycle':        flagged_idx,
         'T²':           T2_arr[flagged_idx].round(3),
@@ -1393,6 +1395,31 @@ with tab5:
                 f"in Calibration (Phase I flags). See <strong>Summary</strong> for root cause analysis. "
                 f"You can still load additional files below for comparison.","info")
             st.markdown("**Optional: compare additional datasets**")
+        else:
+            # SPC workflow — offer built-in test set if split was applied
+            if st.session_state.df_test_builtin is not None:
+                already_loaded = 'Built-in test set' in [
+                    f['name'] for f in st.session_state.mon_files]
+                if not already_loaded:
+                    box("ℹ️ A train/test split was applied in the Dataset tab. "
+                        "You can use the built-in test set directly, or upload separate files.",
+                        "info")
+                    if st.button("▶ Use built-in test set",
+                                 key='btn_use_builtin', type='primary'):
+                        df_te = st.session_state.df_test_builtin
+                        X_te = (df_te[fn].values
+                                if set(fn).issubset(df_te.columns)
+                                else df_te.values)
+                        st.session_state.mon_files.append({
+                            'name': 'Built-in test set',
+                            'n_rows': len(df_te),
+                            'mon': monitor_new(mdl, X_te)
+                        })
+                        st.rerun()
+                else:
+                    box("✅ Built-in test set already loaded in monitoring.",
+                        "ok")
+            st.markdown("**Or upload additional files from USB**")
 
         up_test=st.file_uploader("Add CSV or Excel file",
                                   type=['csv','xlsx','xls'],key='up_test')
@@ -1645,6 +1672,173 @@ with tab6:
             )
             llm_button("Generate Root Cause Analysis & Action Plan",
                        prompt_rc,key='ai_rootcause')
+
+            # ── Y VALIDATION — only if Y columns are defined ────────
+            y_names = st.session_state.get('y_names', [])
+            df_Y    = st.session_state.get('df_Y', None)
+
+            if y_names and df_Y is not None and len(df_Y) > 0:
+                st.markdown("---")
+                st.markdown("### 🎯 Y Validation")
+                st.markdown(
+                    "Compares PCA-SPC anomaly flags against your defined Y variables. "
+                    "Helps assess whether the model detects process conditions "
+                    "that actually lead to quality issues or failures."
+                )
+
+                # Align Y with the observations used in the analysis
+                # For SPC (Phase II): Y needs to match test set indices
+                # For Diagnostic: Y matches full dataset
+                if wf_sum in ('diagnostic','exploratory'):
+                    # Full dataset — Y aligns directly
+                    df_Y_aligned = df_Y.reset_index(drop=True)
+                    n_y = len(df_Y_aligned)
+                    if n_y != n_test:
+                        box("⚠️ Y variable length does not match the analysed dataset. "
+                            "Cannot perform validation.","warn")
+                        df_Y_aligned = None
+                else:
+                    # SPC — Y for the test portion only
+                    if st.session_state.df_test_builtin is not None:
+                        # Get original full df_Y and slice test portion
+                        df_X_full = st.session_state.df_X
+                        n_full = len(df_X_full)
+                        test_size = len(st.session_state.df_test_builtin)
+                        train_size = n_full - test_size
+                        df_Y_aligned = df_Y.iloc[train_size:].reset_index(drop=True)
+                        if len(df_Y_aligned) != n_test:
+                            df_Y_aligned = None
+                            box("⚠️ Y variable length does not match test set. "
+                                "Cannot perform validation.","warn")
+                    else:
+                        df_Y_aligned = None
+                        box("ℹ️ Y validation for externally loaded files is not "
+                            "currently supported. Use the built-in train/test split.","info")
+
+                if df_Y_aligned is not None:
+                    for y_col in y_names:
+                        if y_col not in df_Y_aligned.columns:
+                            continue
+
+                        y_vals = df_Y_aligned[y_col].values
+                        pca_flags = (all_t2f | all_qf)
+
+                        # Check if Y looks binary or continuous
+                        unique_vals = np.unique(y_vals[~np.isnan(y_vals)])
+                        is_binary = len(unique_vals) <= 2
+
+                        st.markdown(f"**Y variable: `{y_col}`**")
+
+                        if is_binary:
+                            # Confusion matrix style analysis
+                            y_bin = (y_vals > 0).astype(int)
+                            pca_bin = pca_flags.astype(int)
+
+                            tp = int(((pca_bin==1) & (y_bin==1)).sum())
+                            fp = int(((pca_bin==1) & (y_bin==0)).sum())
+                            fn_ = int(((pca_bin==0) & (y_bin==1)).sum())
+                            tn = int(((pca_bin==0) & (y_bin==0)).sum())
+
+                            n_y1 = int(y_bin.sum())
+                            n_flagged = int(pca_bin.sum())
+
+                            precision = tp/(tp+fp) if (tp+fp)>0 else 0
+                            recall    = tp/(tp+fn_) if (tp+fn_)>0 else 0
+                            f1        = 2*precision*recall/(precision+recall) if (precision+recall)>0 else 0
+
+                            # KPI row
+                            v1,v2,v3,v4 = st.columns(4)
+                            v1.metric("Y=1 events", f"{n_y1} ({n_y1/n_test*100:.1f}%)")
+                            v2.metric("PCA flagged", f"{n_flagged} ({n_flagged/n_test*100:.1f}%)")
+                            v3.metric("Overlap (TP)", f"{tp}",
+                                      help="Cycles flagged by PCA-SPC that also have Y=1")
+                            v4.metric("Missed (FN)", f"{fn_}",
+                                      help="Y=1 events NOT flagged by PCA-SPC")
+
+                            # Confusion matrix as table
+                            st.markdown("**Confusion matrix:**")
+                            df_cm = pd.DataFrame({
+                                '': ['PCA flag = 1', 'PCA flag = 0'],
+                                'Y = 1': [tp, fn_],
+                                'Y = 0': [fp, tn]
+                            })
+                            st.dataframe(df_cm, use_container_width=False,
+                                         hide_index=True)
+
+                            # Metrics
+                            m1,m2,m3 = st.columns(3)
+                            m1.metric("Precision",f"{precision:.1%}",
+                                      help="Of PCA-flagged cycles, how many had Y=1?")
+                            m2.metric("Recall",f"{recall:.1%}",
+                                      help="Of Y=1 events, how many were flagged by PCA?")
+                            m3.metric("F1 Score",f"{f1:.2f}")
+
+                            # Interpretation
+                            if recall > 0.7 and precision > 0.5:
+                                interp_kind = "ok"
+                                interp = (f"✅ Strong agreement — the PCA-SPC model detects "
+                                          f"{recall:.0%} of {y_col} events with "
+                                          f"{precision:.0%} precision. "
+                                          f"The process variables carry meaningful signal.")
+                            elif recall > 0.4:
+                                interp_kind = "warn"
+                                interp = (f"⚠️ Partial agreement — the model detects "
+                                          f"{recall:.0%} of {y_col} events. "
+                                          f"{fn_} events were missed — they may have causes "
+                                          f"outside the monitored X variables.")
+                            else:
+                                interp_kind = "warn"
+                                interp = (f"⚠️ Low overlap — only {recall:.0%} of {y_col} events "
+                                          f"are flagged by PCA-SPC. The process variables may not "
+                                          f"fully explain this outcome, or the model needs "
+                                          f"recalibration on a more representative period.")
+                            box(interp, interp_kind)
+
+                            # AI interpretation
+                            prompt_yval = (
+                                f"PCA-SPC model validated against Y='{y_col}'.\n"
+                                f"Total cycles: {n_test}. Y=1 events: {n_y1} ({n_y1/n_test*100:.1f}%).\n"
+                                f"PCA flagged: {n_flagged}. True positives: {tp}. "
+                                f"False negatives: {fn_}. False positives: {fp}.\n"
+                                f"Precision: {precision:.1%}. Recall: {recall:.1%}. F1: {f1:.2f}.\n\n"
+                                "In 3 bullet points:\n"
+                                "• What does this overlap tell us about the process?\n"
+                                "• Why might some Y=1 events be missed by PCA-SPC?\n"
+                                "• What does this mean for using this model in production?"
+                            )
+                            llm_button(f"Interpret Y validation — {y_col}",
+                                       prompt_yval, key=f'ai_yval_{y_col}')
+
+                        else:
+                            # Continuous Y — compare means
+                            y_anomalous = y_vals[pca_flags]
+                            y_normal    = y_vals[~pca_flags]
+
+                            if len(y_anomalous) > 0 and len(y_normal) > 0:
+                                c1,c2,c3 = st.columns(3)
+                                c1.metric("Y mean — normal cycles",
+                                          f"{y_normal.mean():.3f}",
+                                          help="Mean of Y for cycles inside control limits")
+                                c2.metric("Y mean — anomalous cycles",
+                                          f"{y_anomalous.mean():.3f}",
+                                          delta=f"{y_anomalous.mean()-y_normal.mean():+.3f}",
+                                          help="Mean of Y for cycles flagged by PCA-SPC")
+                                diff_pct = abs(y_anomalous.mean()-y_normal.mean()) / \
+                                           (abs(y_normal.mean())+1e-9) * 100
+                                c3.metric("Difference", f"{diff_pct:.1f}%")
+
+                                if diff_pct > 10:
+                                    box(f"✅ Anomalous cycles show a meaningful difference "
+                                        f"in <strong>{y_col}</strong> ({diff_pct:.1f}% shift). "
+                                        f"The PCA-SPC model captures process variation "
+                                        f"that affects this quality metric.","ok")
+                                else:
+                                    box(f"⚠️ Anomalous cycles show little difference "
+                                        f"in <strong>{y_col}</strong> ({diff_pct:.1f}% shift). "
+                                        f"The flagged process variations may not directly "
+                                        f"impact this quality variable.","warn")
+
+                        st.markdown("")  # spacing between Y variables
 
         if st.session_state.anomaly_log:
             st.markdown("---")
