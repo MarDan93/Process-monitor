@@ -14,7 +14,7 @@
 
 🔗 **[process-monitor.streamlit.app](https://process-monitor-6qzenpxqzttrvce3ie3qoz.streamlit.app/)**
 
-A demo dataset is available in this repository (`demo_industrial_process.csv`).
+A demo dataset is available in this repository.
 Load it directly into the app to explore the full workflow without any setup.
 
 <!-- ![Demo](docs/demo.gif) -->
