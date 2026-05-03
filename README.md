@@ -96,49 +96,58 @@ pharmaceutical manufacturing, food processing, and more.
 
 ## Demo dataset
 
-The `demo/` folder contains the **Multi-stage Continuous-Flow Manufacturing Process** dataset
-— real process data from a multi-stage continuous production line, ideal for demonstrating
-PCA-SPC monitoring on industrial sensor data.
+The `demo/` folder contains **`water_treatment_demo.csv`** — a realistic synthetic dataset
+modelled on the [UCI Water Treatment Plant Dataset](https://archive.ics.uci.edu/dataset/106/water+treatment+plant),
+one of the most cited industrial process datasets in SPC and process monitoring literature.
 
-**Source:** Kaggle —
-[Multi-stage continuous-flow manufacturing process](https://www.kaggle.com/datasets/supergus/multistage-continuousflow-manufacturing-process)
-**License:** CC0 Public Domain — free to use and redistribute without restrictions.
+It represents daily sensor readings from a multi-stage urban wastewater treatment plant,
+with realistic correlated process variables and three inserted anomaly events.
+
+**License:** CC0 — free to use and redistribute.
 
 | Property | Value |
 |---|---|
-| Observations | ~14,000 production cycles |
-| Variables | Ambient conditions, raw material properties, zone temperatures, motor amperages, material pressures |
-| Quality outputs (Y) | Stage 1 and Stage 2 output measurements |
+| Observations | 527 daily readings |
+| Process variables (X) | 29 — input, primary settler, secondary settler sensors |
+| Quality outputs (Y) | 9 — output pH, BOD, COD, suspended solids, conductivity, performance indices |
 | Missing values | None |
+| Anomaly events | 3 known periods |
+
+**Known anomaly periods:**
+
+| Period | Event | Variables involved |
+|---|---|---|
+| Days 0–199 | Stable reference period (train) | — |
+| Days 200–230 | Hydraulic overload — high input flow | Q-E, DBO-E, SS-E |
+| Days 350–365 | Organic overload — high BOD/COD input | DBO-E, DQO-E, DBO-S |
+| Days 430–480 | pH disturbance — acid discharge event | PH-E, PH-D, PH-S, COND-E |
 
 ### ⬇️ Try the demo
 
-1. Download the dataset from Kaggle (free account required):
-   [→ kaggle.com/datasets/supergus/multistage-continuousflow-manufacturing-process](https://www.kaggle.com/datasets/supergus/multistage-continuousflow-manufacturing-process)
-
-   *Or use the file in this repository's `demo/` folder if available.*
+1. Download the dataset:
+   **[→ demo/water_treatment_demo.csv](https://raw.githubusercontent.com/MarDan93/process-monitor/main/demo/water_treatment_demo.csv)**
+   *(right-click → Save link as)*
 
 2. Open the app:
    **[→ process-monitor.streamlit.app](https://process-monitor-6qzenpxqzttrvce3ie3qoz.streamlit.app/)**
 
 3. Configure the sidebar:
    ```
-   Columns to exclude:   time_stamp
-
-   Y Variables:          Stage1.Output.Measurement0
-                         Stage1.Output.Measurement1
-                         Stage2.Output.Measurement0
-                         Stage2.Output.Measurement1
+   Y Variables:    DBO-S
+                   DQO-S
+                   SS-S
    ```
 
-4. Go to **⚙️ Process Context** → select **Statistical Process Control** → Save
+4. Go to **⚙️ Process Context** → write a brief process description
+   → select **Statistical Process Control** → Save
 
-5. Go to **📂 Dataset** → upload the CSV → apply Temporal split (70%)
+5. Go to **📂 Dataset** → upload the CSV → apply Temporal split (38%, ~200 rows as train)
 
 6. Follow the guided workflow: PC Selection → Calibration → Monitoring → Summary
 
-> **Note:** Several temperature columns have near-zero variance (measurement noise only)
-> and are automatically removed by the app during preprocessing. This is expected and normal.
+> **Suggested train size:** use 38% (first ~200 rows, days 0–199) as the train set —
+> the stable reference period before any anomalies.
+> The remaining 327 days contain all three anomaly events and serve as Phase II test data.
 
 ---
 
