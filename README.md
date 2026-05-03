@@ -97,22 +97,42 @@ pharmaceutical manufacturing, food processing, and more.
 
 ## Demo dataset
 
-`demo_industrial_process.csv` — 1200 production cycles, 15 process variables
-(temperatures, pressures, times, positions, speeds) and 2 quality variables.
+The repository includes the **AI4I 2020 Predictive Maintenance Dataset**
+(`ai4i2020.csv`) — a synthetic dataset modelling real industrial predictive
+maintenance scenarios, widely used in manufacturing ML research.
 
-Contains three realistic anomaly scenarios:
+**Source:** UCI Machine Learning Repository —
+[AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset)
+**License:** CC BY 4.0 — free to use and share with attribution
+**Citation:** Stephan Matzka, *Explainable Artificial Intelligence for
+Predictive Maintenance Applications*, AI4I 2020 Conference.
 
-| Period | Event | Variables involved |
-|---|---|---|
-| Cycles 0–699 | Stable reference period (train) | — |
-| Cycles 700–749 | Gradual thermal drift | Temperature Zone 1–3, Fill Time |
-| Cycles 800–809 | Pressure spike | Injection Pressure, Holding Pressure |
-| Cycles 950–1199 | Material change (viscosity shift) | Back Pressure, Screw Speed, Fill Time |
+| Property | Value |
+|---|---|
+| Observations | 10,000 production cycles |
+| Process variables (X) | 5 — Air Temp, Process Temp, Rotational Speed, Torque, Tool Wear |
+| Target variable (Y) | Machine failure (binary) |
+| Failure rate | ~3.4% of cycles |
 
-Suggested setup for demo:
-- Y Variables (sidebar): `Part_Weight_g`, `Cushion_mm`
-- Split: Temporal, 60% train (cycles 0–699)
-- Objective: Statistical Process Control
+**Suggested app configuration for the demo:**
+
+```
+Y Variables (sidebar):          Machine failure
+Columns to exclude (sidebar):   UDI
+                                Product ID
+                                TWF
+                                HDF
+                                PWF
+                                OSF
+                                RNF
+
+Split:      Temporal, 70% train
+Objective:  Statistical Process Control
+```
+
+> The failure type flags (TWF, HDF, PWF, OSF, RNF) are excluded from the
+> model because they are derived from the target — including them would cause
+> data leakage. `UDI` and `Product ID` are identifiers with no process meaning.
 
 ---
 
