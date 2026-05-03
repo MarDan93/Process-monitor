@@ -14,8 +14,7 @@
 
 🔗 **[process-monitor.streamlit.app](https://process-monitor-6qzenpxqzttrvce3ie3qoz.streamlit.app/)**
 
-A demo dataset is available in this repository.
-Load it directly into the app to explore the full workflow without any setup.
+A demo dataset is available — see the **Demo dataset** section below for download instructions and app configuration.
 
 <!-- ![Demo](docs/demo.gif) -->
 
@@ -97,42 +96,49 @@ pharmaceutical manufacturing, food processing, and more.
 
 ## Demo dataset
 
-The repository includes the **AI4I 2020 Predictive Maintenance Dataset**
-(`ai4i2020.csv`) — a synthetic dataset modelling real industrial predictive
-maintenance scenarios, widely used in manufacturing ML research.
+The `demo/` folder contains the **Multi-stage Continuous-Flow Manufacturing Process** dataset
+— real process data from a multi-stage continuous production line, ideal for demonstrating
+PCA-SPC monitoring on industrial sensor data.
 
-**Source:** UCI Machine Learning Repository —
-[AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset)
-**License:** CC BY 4.0 — free to use and share with attribution
-**Citation:** Stephan Matzka, *Explainable Artificial Intelligence for
-Predictive Maintenance Applications*, AI4I 2020 Conference.
+**Source:** Kaggle —
+[Multi-stage continuous-flow manufacturing process](https://www.kaggle.com/datasets/supergus/multistage-continuousflow-manufacturing-process)
+**License:** CC0 Public Domain — free to use and redistribute without restrictions.
 
 | Property | Value |
 |---|---|
-| Observations | 10,000 production cycles |
-| Process variables (X) | 5 — Air Temp, Process Temp, Rotational Speed, Torque, Tool Wear |
-| Target variable (Y) | Machine failure (binary) |
-| Failure rate | ~3.4% of cycles |
+| Observations | ~14,000 production cycles |
+| Variables | Ambient conditions, raw material properties, zone temperatures, motor amperages, material pressures |
+| Quality outputs (Y) | Stage 1 and Stage 2 output measurements |
+| Missing values | None |
 
-**Suggested app configuration for the demo:**
+### ⬇️ Try the demo
 
-```
-Y Variables (sidebar):          Machine failure
-Columns to exclude (sidebar):   UDI
-                                Product ID
-                                TWF
-                                HDF
-                                PWF
-                                OSF
-                                RNF
+1. Download the dataset from Kaggle (free account required):
+   [→ kaggle.com/datasets/supergus/multistage-continuousflow-manufacturing-process](https://www.kaggle.com/datasets/supergus/multistage-continuousflow-manufacturing-process)
 
-Split:      Temporal, 70% train
-Objective:  Statistical Process Control
-```
+   *Or use the file in this repository's `demo/` folder if available.*
 
-> The failure type flags (TWF, HDF, PWF, OSF, RNF) are excluded from the
-> model because they are derived from the target — including them would cause
-> data leakage. `UDI` and `Product ID` are identifiers with no process meaning.
+2. Open the app:
+   **[→ process-monitor.streamlit.app](https://process-monitor-6qzenpxqzttrvce3ie3qoz.streamlit.app/)**
+
+3. Configure the sidebar:
+   ```
+   Columns to exclude:   time_stamp
+
+   Y Variables:          Stage1.Output.Measurement0
+                         Stage1.Output.Measurement1
+                         Stage2.Output.Measurement0
+                         Stage2.Output.Measurement1
+   ```
+
+4. Go to **⚙️ Process Context** → select **Statistical Process Control** → Save
+
+5. Go to **📂 Dataset** → upload the CSV → apply Temporal split (70%)
+
+6. Follow the guided workflow: PC Selection → Calibration → Monitoring → Summary
+
+> **Note:** Several temperature columns have near-zero variance (measurement noise only)
+> and are automatically removed by the app during preprocessing. This is expected and normal.
 
 ---
 
