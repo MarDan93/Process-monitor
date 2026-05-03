@@ -166,7 +166,32 @@ process-monitor/
 
 ---
 
-## Status
+## Dataset requirements & current limitations
+
+### What works well
+- **Continuous processes** — injection molding, extrusion, reactors, assembly lines
+- **Numerical sensor data** — temperatures, pressures, flows, positions, speeds
+- **Stationary processes** — stable operating conditions during the calibration period
+- **5 to ~50 variables** — beyond that, RMSECV slows down and contribution plots lose interpretability
+- **200+ observations** in the train set (minimum ~5–10× number of variables)
+
+### Current limitations
+
+| Limitation | Detail |
+|---|---|
+| **No batch data support** | Each row is treated as an independent observation. Batch processes (with start-up, steady-state, and end phases) require Multiway PCA preprocessing before use. |
+| **No temporal structure** | The app does not model autocorrelation or time dependencies. If observations are strongly correlated in time, UCL estimates may be slightly off. |
+| **Numerical variables only** | Categorical variables (material type, operator, recipe, shift) are ignored. If they drive process variability, contribution plots may point to the wrong variables. |
+| **Discretised variables** | Variables with few distinct values (fixed setpoints, rounded readings) can create stripe patterns in score plots — not anomalies, just data structure. |
+| **Static model** | The Phase I model does not update automatically. If the process drifts permanently (tool wear, supplier change), the model must be recalibrated manually. |
+| **No slow drift detection** | Gradual process changes over weeks or months are not automatically flagged. The user must decide when to recalibrate. |
+
+> **In short:** this tool works best on **continuous, stationary, numerical process data**
+> where the goal is to detect deviations from a known stable reference period.
+> Batch processes, time-series forecasting, and categorical process variables
+> are out of scope in the current version.
+
+
 
 Active development. Core analytical pipeline and SPC logic are stable.
 UI and AI features are continuously improved.
