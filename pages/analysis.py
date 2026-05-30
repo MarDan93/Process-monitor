@@ -23,8 +23,11 @@ layout = html.Div([
     Input("ctx-store",   "data"),
     Input("data-store",  "data"),
     Input("split-store", "data"),
+    Input("url-store",   "data"),
 )
-def render_analysis(model_data, mon, ctx, data, split):
+def render_analysis(model_data, mon, ctx, data, split, pathname):
+    if pathname and pathname != "/analysis":
+        return no_update
     if not model_data or not model_data.get("model_b64"):
         return html.Div([
             html.Div("⬆ Calibra prima il modello nella sezione Training.",

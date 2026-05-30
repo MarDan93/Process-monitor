@@ -21,8 +21,11 @@ layout = html.Div([
     Output("training-content", "children"),
     Input("data-store",  "data"),
     Input("model-store", "data"),
+    Input("url-store",   "data"),
 )
-def render_training(data, model_data):
+def render_training(data, model_data, pathname):
+    if pathname and pathname != "/training":
+        return no_update, no_update
     if not data or not data.get("df_X_json"):
         return html.Div([
             html.Div(

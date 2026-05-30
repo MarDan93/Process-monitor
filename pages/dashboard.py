@@ -1,5 +1,5 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, Input, Output, State, callback, no_update
 import dash_bootstrap_components as dbc
 import numpy as np
 import pandas as pd
@@ -22,8 +22,11 @@ layout = html.Div([
     Input("model-store", "data"),
     Input("mon-store",   "data"),
     Input("data-store",  "data"),
+    Input("url-store",   "data"),
 )
-def render_dashboard(ctx, model_data, mon, data):
+def render_dashboard(ctx, model_data, mon, data, pathname):
+    if pathname and pathname not in ("/", ""):
+        return no_update
     ctx        = ctx        or {}
     model_data = model_data or {}
     mon        = mon        or {}

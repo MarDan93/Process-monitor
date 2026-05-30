@@ -20,8 +20,11 @@ layout = html.Div([
     Output("structure-content", "children"),
     Input("model-store", "data"),
     Input("cfg-store",   "data"),
+    Input("url-store",   "data"),
 )
-def render_structure(model_data, cfg):
+def render_structure(model_data, cfg, pathname):
+    if pathname and pathname != "/structure":
+        return no_update
     if not model_data or not model_data.get("model_b64"):
         return html.Div([
             html.Div("⬆ Calibra prima il modello nella sezione Training.",

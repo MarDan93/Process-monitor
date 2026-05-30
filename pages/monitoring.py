@@ -26,8 +26,11 @@ layout = html.Div([
     Input("model-store",  "data"),
     Input("mon-store",    "data"),
     Input("ctx-store",    "data"),
+    Input("url-store",    "data"),
 )
-def render_monitoring(model_data, mon, ctx):
+def render_monitoring(model_data, mon, ctx, pathname):
+    if pathname and pathname != "/monitoring":
+        return no_update, no_update
     if not model_data or not model_data.get("model_b64"):
         return html.Div([
             html.Div("⬆ Calibra prima il modello nella sezione Training.",
