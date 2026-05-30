@@ -36,13 +36,20 @@ NAV_ITEMS = [
 ]
 
 PAGE_CHIPS = {
-    "/":           ["Qual è lo stato attuale?", "Cosa devo fare ora?"],
-    "/setup":      ["Quali variabili sono più importanti?", "Come scelgo le Y?"],
+    "/":           ["Qual è lo stato del processo?", "Cosa devo fare adesso?"],
+    "/setup":      ["Come configuro le variabili Y?", "Quali colonne escludere?"],
     "/training":   ["Quante componenti scegliere?", "Il modello è ben calibrato?"],
-    "/structure":  ["Cosa rappresentano PC1 e PC2?", "Quali variabili correlano?"],
-    "/monitoring": ["Perché questi cicli sono anomali?", "Quali variabili controllare?"],
-    "/analysis":   ["Qual è la root cause principale?", "Cosa devo monitorare?"],
+    "/structure":  ["Come interpretare i loadings?", "Cosa mostrano gli score plot?"],
+    "/monitoring": ["Come interpretare T² e Q?", "Cosa fare se Q supera UCL?"],
+    "/analysis":   ["Come identificare la causa radice?", "Come leggere i contribution plot?"],
 }
+
+# Chips shown when no data is loaded yet
+_CHIPS_START = ["Come iniziare con questo tool?", "Cosa carico in Setup?"]
+# Chips shown when data is loaded but no model yet
+_CHIPS_TRAIN = ["Quante componenti PCA scegliere?", "Come funziona la calibrazione Phase I?"]
+# Chips shown when model is ready but no monitoring yet
+_CHIPS_MON   = ["Come caricare dati di Phase II?", "Cosa significano T² e Q (SPE)?"]
 
 
 def _sidebar():
@@ -158,9 +165,11 @@ def _ai_chat():
                            "minHeight": "300px"},
                     children=[
                         html.Div(
-                            "Ciao! Sono il tuo assistente AI per l'analisi del processo. "
-                            "Puoi chiedermi aiuto in qualsiasi momento — so sempre cosa "
-                            "stai analizzando.",
+                            "Ciao! Sono il tuo assistente AI per il monitoraggio PCA-SPC. "
+                            "Conosco sempre lo stato della tua sessione: dati caricati, "
+                            "modello calibrato, anomalie rilevate. "
+                            "Puoi chiedermi di interpretare i risultati, scegliere i parametri "
+                            "o capire le cause radice — in italiano o in qualsiasi altra lingua.",
                             className="chat-bubble-ai",
                         )
                     ],
@@ -318,13 +327,28 @@ def toggle_ai(n, is_open):
     return not is_open
 
 
-# ── AI chips — contextual per page ───────────────────────────
+# ── AI chips — contextual per page + session state ───────────
 @callback(
     Output("ai-chips-container", "children"),
-    Input("url-store", "data"),
+    Input("url-store",   "data"),
+    Input("data-store",  "data"),
+    Input("model-store", "data"),
+    Input("mon-store",   "data"),
 )
-def update_chips(pathname):
-    chips = PAGE_CHIPS.get(pathname or "/", [])
+def update_chips(pathname, data, model, mon):
+    has_data  = bool((data  or {}).get("df_X_json"))
+    has_model = bool((model or {}).get("model_b64"))
+    has_mon   = bool((mon   or {}).get("mon_files"))
+
+    if not has_data:
+        chips = _CHIPS_START
+    elif not has_model:
+        chips = _CHIPS_TRAIN
+    elif not has_mon:
+        chips = _CHIPS_MON
+    else:
+        chips = PAGE_CHIPS.get(pathname or "/", PAGE_CHIPS["/"])
+
     return [
         html.Button(c, className="chip", id={"type": "ai-chip", "idx": i},
                     n_clicks=0)
@@ -362,9 +386,20 @@ def send_ai_message(n_btn, n_enter, chip_clicks, user_text,
 
     if isinstance(triggered, dict) and triggered.get("type") == "ai-chip":
         idx = triggered["idx"]
-        chips = PAGE_CHIPS.get(pathname or "/", [])
-        if idx < len(chips):
-            text = chips[idx]
+        # Replicate the same chip selection logic as update_chips
+        has_data  = bool((data  or {}).get("df_X_json"))
+        has_model = bool((model or {}).get("model_b64"))
+        has_mon   = bool((mon   or {}).get("mon_files"))
+        if not has_data:
+            current_chips = _CHIPS_START
+        elif not has_model:
+            current_chips = _CHIPS_TRAIN
+        elif not has_mon:
+            current_chips = _CHIPS_MON
+        else:
+            current_chips = PAGE_CHIPS.get(pathname or "/", PAGE_CHIPS["/"])
+        if idx < len(current_chips):
+            text = current_chips[idx]
 
     if not text or not text.strip():
         return no_update, no_update, no_update
