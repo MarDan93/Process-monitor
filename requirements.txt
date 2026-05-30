@@ -1,4 +1,7 @@
-streamlit>=1.35.0
+dash>=2.17.0
+dash-bootstrap-components>=1.6.0
+gunicorn>=21.0.0
+flask-caching>=2.1.0
 plotly>=5.19.0
 scikit-learn
 scipy
@@ -9,3 +12,5 @@ xlrd
 google-generativeai
 anthropic
 langdetect
+python-pptx>=0.6.21
+kaleido>=0.2.1
